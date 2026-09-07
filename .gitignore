@@ -1,0 +1,32 @@
+# Data never goes in git. SCI_DATA_DIR should point outside OneDrive anyway,
+# but keep a local ./data escape hatch ignored too.
+data/
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.csv
+*.zip
+
+# Secrets
+.env
+.env.local
+*.json.secret
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Notebook outputs are noise in diffs; strip before committing.
+notebooks/**/*.html
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
