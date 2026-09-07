@@ -20,6 +20,8 @@ from sci.log import get_logger
 log = get_logger(__name__)
 
 DDL_DIR = REPO_ROOT / "sql" / "ddl"
+TRANSFORM_DIR = REPO_ROOT / "sql" / "transform"
+ANALYTICS_DIR = REPO_ROOT / "sql" / "analytics"
 
 
 @dataclass(frozen=True)
@@ -131,9 +133,38 @@ def load_tables(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     return counts
 
 
-def build(force_ddl: bool = True) -> dict[str, int]:
-    """Full warehouse build: DDL then loads."""
+def run_transforms(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """Execute sql/transform/*.sql in filename order, after the loads.
+
+    These build the derived tables the analytics and model layers read:
+    core.panel (availability-filtered), core.stockout_flags, core.series_class.
+    They cannot live in the DDL because they are CTAS over loaded data.
+    """
+    counts: dict[str, int] = {}
+    for path in sorted(TRANSFORM_DIR.glob("*.sql")):
+        log.info("transform  %s", path.name)
+        con.execute(path.read_text(encoding="utf-8"))
+        # Report the row count of whatever table the script created.
+        for table in _created_tables(path.read_text(encoding="utf-8")):
+            n = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            counts[table] = n
+            log.info("%-22s %s rows", table, f"{n:,}")
+    return counts
+
+
+def _created_tables(sql: str) -> list[str]:
+    """Pull `CREATE OR REPLACE TABLE <name> AS` targets out of a transform script."""
+    import re
+
+    return re.findall(r"CREATE\s+OR\s+REPLACE\s+TABLE\s+([\w.]+)\s+AS", sql, flags=re.IGNORECASE)
+
+
+def build(force_ddl: bool = True, transforms: bool = True) -> dict[str, int]:
+    """Full warehouse build: DDL, loads, then derived transforms."""
     with connect() as con:
         if force_ddl:
             run_ddl(con)
-        return load_tables(con)
+        counts = load_tables(con)
+        if transforms:
+            counts.update(run_transforms(con))
+        return counts

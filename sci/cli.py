@@ -156,6 +156,48 @@ def warehouse_query_cmd(
         console.print(t)
 
 
+@app.command("analyze")
+def analyze_cmd(
+    name: str = typer.Argument(
+        "", help="Analytics script stem, e.g. abc_xyz_segmentation. Omit to list them."
+    ),
+    limit: int = typer.Option(60, help="Max rows to print."),
+    csv: bool = typer.Option(False, "--csv", help="Write the full result to artifacts/ as CSV."),
+) -> None:
+    """Run a file from sql/analytics/ against the warehouse."""
+    from sci.warehouse import ANALYTICS_DIR, connect
+
+    scripts = {p.stem: p for p in sorted(ANALYTICS_DIR.glob("*.sql"))}
+    if not name:
+        t = Table(title="sql/analytics")
+        t.add_column("name", style="cyan")
+        for stem in scripts:
+            t.add_row(stem)
+        console.print(t)
+        return
+    if name not in scripts:
+        console.print(f"[red]No such analysis '{name}'.[/red] Available: {', '.join(scripts)}")
+        raise typer.Exit(code=1)
+
+    with connect(read_only=True) as con:
+        df = con.sql(scripts[name].read_text(encoding="utf-8")).df()
+
+    if csv:
+        settings.ensure_dirs()
+        out = settings.artifacts_dir / f"{name}.csv"
+        df.to_csv(out, index=False)
+        console.print(f"[green]wrote[/green] {out} ({len(df):,} rows)")
+
+    t = Table(title=f"{name}  ({len(df):,} rows)")
+    for c in df.columns:
+        t.add_column(str(c), overflow="fold")
+    for row in df.head(limit).itertuples(index=False):
+        t.add_row(*["" if v is None else str(v) for v in row])
+    console.print(t)
+    if len(df) > limit:
+        console.print(f"[dim]... {len(df) - limit:,} more rows (use --limit or --csv)[/dim]")
+
+
 def _report(counts: dict[str, int]) -> None:
     t = Table(title="staged")
     t.add_column("table", style="cyan")

@@ -5,7 +5,7 @@ CSV download.
 
 | Source | What it gives | Grain | Key required | Status |
 |---|---|---|---|---|
-| M5 / Walmart (Kaggle) | Transaction spine: units sold, prices, calendar, SNAP + event flags | item × store × day | Kaggle account (manual download) | pending download |
+| M5 / Walmart (Kaggle) | Transaction spine: units sold, prices, calendar, SNAP + event flags | item × store × day | Kaggle account (manual download) | **ingested** (59,181,090 rows) |
 | Open-Meteo Archive | Daily temperature, precipitation, snowfall, wind | state × day | none | **ingested** (6,210 rows) |
 | FRED | CPI, gas price, national + state unemployment | series × native freq | free API key | client written, dormant |
 | Google Trends | Category search interest | category × state × week | none (rate-limited) | deferred — first in the spec's cut order |

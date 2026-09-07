@@ -89,8 +89,7 @@ def test_built_warehouse_weather_covers_every_state():
     con = duckdb.connect(str(settings.duckdb_path), read_only=True)
     try:
         states = {
-            r[0]
-            for r in con.execute("SELECT DISTINCT state_id FROM core.fact_weather").fetchall()
+            r[0] for r in con.execute("SELECT DISTINCT state_id FROM core.fact_weather").fetchall()
         }
     finally:
         con.close()
