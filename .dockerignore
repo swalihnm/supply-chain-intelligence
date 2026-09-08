@@ -1,0 +1,21 @@
+# Everything heavy or irrelevant to serving.
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+notebooks/
+tests/
+sql/
+scripts/
+data/
+*.zip
+*.duckdb
+*.duckdb.wal
+.env
+.env.local
+docs/
+PROGRESS.md
+PROJECT-01-supply-chain-forecasting.md

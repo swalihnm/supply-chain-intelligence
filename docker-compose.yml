@@ -1,0 +1,27 @@
+# Both roles from one image, for local verification before deploying.
+#
+#   uv run python scripts/build_serving_bundle.py
+#   uv run python scripts/stage_deploy.py
+#   docker compose up --build
+#
+# dashboard -> http://localhost:8501
+# api       -> http://localhost:8000/docs
+
+services:
+  dashboard:
+    build: .
+    image: sci:latest
+    command: ["dashboard"]
+    ports:
+      - "8501:8501"
+    environment:
+      SCI_DATA_DIR: /data
+
+  api:
+    build: .
+    image: sci:latest
+    command: ["api"]
+    ports:
+      - "8000:8000"
+    environment:
+      SCI_DATA_DIR: /data
