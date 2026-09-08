@@ -88,8 +88,30 @@ class LeadTimeDemand:
     lead_time_max: int
 
     def quantile(self, q: float) -> np.ndarray:
-        """Per-series quantile of lead-time demand."""
+        """Per-series quantile of lead-time demand at one shared level."""
         return np.quantile(self.samples, q, axis=1)
+
+    def quantile_per_series(self, qs: np.ndarray) -> np.ndarray:
+        """A DIFFERENT quantile level for each series.
+
+        Needed once the optimizer stops applying one uniform service level to
+        the whole catalogue and starts choosing per series - which is the entire
+        point of the allocation step.
+        """
+        srt = np.sort(self.samples, axis=1)
+        n = srt.shape[1]
+        idx = np.clip(np.round(np.asarray(qs) * (n - 1)).astype(np.int64), 0, n - 1)
+        return srt[np.arange(srt.shape[0]), idx]
+
+    def expected_shortfall(self, level: np.ndarray) -> np.ndarray:
+        """E[(D - level)+] per series - expected unmet units in one cycle.
+
+        Computed from the simulated distribution rather than a formula, so it
+        inherits the skew and zero-inflation of the bootstrap instead of
+        assuming a shape.
+        """
+        excess = self.samples - np.asarray(level)[:, None]
+        return np.maximum(excess, 0.0).mean(axis=1)
 
     def mean(self) -> np.ndarray:
         return self.samples.mean(axis=1)

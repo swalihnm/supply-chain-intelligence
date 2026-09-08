@@ -5,7 +5,7 @@ Usage:  uv run python scripts/run_optimizer.py
 Requires scripts/run_model_ladder.py to have written forecast_test.npz.
 
 Produces in $SCI_DATA_DIR/artifacts/:
-    counterfactual.csv          the three-policy comparison on the test window
+    counterfactual.csv          the four-policy comparison on the test window
     counterfactual_ci.csv       bootstrap confidence intervals on the cost delta
     service_level_frontier.csv  cost vs achieved service, the money chart
     cost_sensitivity.csv        the result across the full cost-parameter grid
@@ -26,18 +26,22 @@ from evaluation.simulate_counterfactual import (
     simulate_policy,
 )
 from features import panel_matrix
-from optimize import constrained_solver, policy
+from optimize import constrained_solver, expected_cost, policy
 from optimize.cost_model import CostParams, sensitivity_grid
 from sci.config import settings
 from sci.log import get_logger
 
 log = get_logger(__name__)
 
-# Extended to 0.999 on purpose. The cost model's own arithmetic points at a
-# high optimum: over a ~12-day exposure window, holding one unit costs roughly
-# $0.025 while a lost unit costs ~$1.50, so the newsvendor critical ratio
-# p/(p+h) sits near 0.98. A frontier that stopped at 0.99 would cut off the
-# turning point and make the curve look monotone when it is not.
+# Extended to 0.999 because the cost model's arithmetic points high: over a
+# ~12-day exposure window a held unit costs about $0.025 while a lost unit costs
+# about $1.50, so the newsvendor critical ratio p/(p+h) sits near 0.98.
+#
+# MEASURED: the frontier is monotone over this whole range - total cost keeps
+# falling as the uniform target rises, with no interior minimum. That is the
+# reason the recommendation is a PER-SERIES allocation rather than a uniform
+# target: if one number were the answer, it would just be "as high as capacity
+# allows", which is not a decision worth making a project about.
 SERVICE_LEVELS = (0.80, 0.85, 0.90, 0.95, 0.975, 0.99, 0.995, 0.999)
 HISTORY_DAYS = 365
 N_SIMS = 1500
@@ -155,10 +159,42 @@ def main() -> None:
     pol_fcst = _forecast_only_at(fcst_sl)
     pol_opt = _optimized_at(opt_sl)
 
+    # ---- the allocation policy: a service level chosen PER SERIES -----------
+    #
+    # The measured frontier falls monotonically to 99.9%, so there is no
+    # interesting uniform target - the real decision is which series deserve the
+    # stock. Levels are chosen on EXPECTED cost, derived from the forecast's
+    # lead-time demand distribution and never from realised demand. See
+    # optimize/expected_cost.py for the overfitting this avoids.
+    log.info("=== per-series allocation on expected cost ===")
+    level_costs = expected_cost.grid(
+        history,
+        forecast_mean,
+        price_sim[:, WARMUP_DAYS:].mean(axis=1),
+        params,
+        SERVICE_LEVELS,
+        n_sims=N_SIMS,
+    )
+    chosen_levels, expected_at_choice = expected_cost.argmin_levels(level_costs)
+    log.info(
+        "  chosen levels: median %.4f, %d distinct; expected cost %.0f",
+        float(np.median(chosen_levels)),
+        len(np.unique(chosen_levels)),
+        float(expected_at_choice.sum()),
+    )
+    pol_alloc = policy.build(
+        history, forecast_mean, service_level=chosen_levels, case_pack=case_pack, n_sims=N_SIMS
+    )
+
     runs = {
         "baseline": simulate_policy(demand, pol_base, price_sim, params, "baseline"),
         "forecast_only": simulate_policy(demand, pol_fcst, price_sim, params, "forecast_only"),
-        "optimized": simulate_policy(demand, pol_opt, price_sim, params, "optimized"),
+        "uniform_empirical": simulate_policy(
+            demand, pol_opt, price_sim, params, "uniform_empirical"
+        ),
+        "cost_optimal_allocation": simulate_policy(
+            demand, pol_alloc, price_sim, params, "cost_optimal_allocation"
+        ),
     }
     cf = pl.DataFrame([r.summary() for r in runs.values()])
     cf.write_csv(art / "counterfactual.csv")
@@ -167,17 +203,12 @@ def main() -> None:
 
     # ---- bootstrap CI on the deltas ----------------------------------------
     ci_rows = []
-    for name in ("forecast_only", "optimized"):
+    for name in ("forecast_only", "uniform_empirical", "cost_optimal_allocation"):
         d = bootstrap_cost_delta(
             runs["baseline"], runs[name], price_sim[:, WARMUP_DAYS:], params, n_boot=N_BOOT
         )
         d["comparison"] = f"baseline -> {name}"
         ci_rows.append(d)
-    d = bootstrap_cost_delta(
-        runs["forecast_only"], runs["optimized"], price_sim[:, WARMUP_DAYS:], params, n_boot=N_BOOT
-    )
-    d["comparison"] = "forecast_only -> optimized"
-    ci_rows.append(d)
     ci = pl.DataFrame(ci_rows)
     ci.write_csv(art / "counterfactual_ci.csv")
     print("\n=== COST DELTA WITH 95% BOOTSTRAP CI ===")
@@ -225,7 +256,7 @@ def main() -> None:
     sens_rows = []
     for cp in sensitivity_grid():
         rb = simulate_policy(demand, pol_base, price_sim, cp, "baseline")
-        ro = simulate_policy(demand, pol_opt, price_sim, cp, "optimized")
+        ro = simulate_policy(demand, pol_alloc, price_sim, cp, "cost_optimal_allocation")
         sens_rows.append(
             {
                 "gross_margin": cp.gross_margin,
@@ -259,26 +290,20 @@ def main() -> None:
         [store_names.index(s) for s in pm.series["store_id"].to_numpy()], dtype=np.int32
     )
 
-    cands = []
-    for sl in SERVICE_LEVELS:
-        r = simulate_policy(demand, policies_by_sl[sl], price_sim, params, f"c_{sl}")
-        per_series_cost = (
-            np.nansum(r.on_hand * params.unit_cost(price_sim[:, WARMUP_DAYS:]), axis=1)
-            * params.holding_rate_daily
-            + np.nansum(r.unmet * params.unit_margin(price_sim[:, WARMUP_DAYS:]), axis=1)
-            * params.stockout_penalty
-            + r.n_orders * params.order_cost
+    # Candidates are costed on EXPECTED cost from the forecast distribution, not
+    # on simulated realised cost. Using realised cost here would let the solver
+    # pick each series' level with knowledge of the outcome it is then scored
+    # against - it inflated the "unconstrained optimum" to 77,554 against a
+    # 127,930 baseline, a 39% saving that was mostly hindsight.
+    cands = [
+        constrained_solver.Candidate(
+            service_level=lc.service_level,
+            expected_cost=lc.expected_cost,
+            inventory_units=lc.inventory_units,
+            capital=lc.capital,
         )
-        cands.append(
-            constrained_solver.Candidate(
-                service_level=sl,
-                expected_cost=per_series_cost,
-                inventory_units=np.nanmean(r.on_hand, axis=1),
-                capital=np.nanmean(
-                    r.on_hand * params.unit_cost(price_sim[:, WARMUP_DAYS:]), axis=1
-                ),
-            )
-        )
+        for lc in level_costs
+    ]
 
     unconstrained = constrained_solver.solve(cands, store_code, store_names)
     log.info("unconstrained optimum cost: %.0f", unconstrained.total_cost)
@@ -316,10 +341,11 @@ def main() -> None:
             "xyz_class": pm.series["xyz_class"],
             "sb_class": pm.series["sb_class"],
             "forecast_daily_mean": forecast_mean,
-            "reorder_point": pol_opt.reorder_point,
-            "order_up_to": pol_opt.order_up_to,
-            "safety_stock": pol_opt.safety_stock,
-            "expected_lt_demand": pol_opt.expected_lt_demand,
+            "reorder_point": pol_alloc.reorder_point,
+            "order_up_to": pol_alloc.order_up_to,
+            "safety_stock": pol_alloc.safety_stock,
+            "expected_lt_demand": pol_alloc.expected_lt_demand,
+            "chosen_service_level": chosen_levels,
             "constrained_service_level": constrained.chosen_level,
         }
     ).write_csv(art / "policy_test.csv")

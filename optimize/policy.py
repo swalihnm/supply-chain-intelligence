@@ -97,15 +97,22 @@ def default_case_packs(price: np.ndarray, seed: int = 0) -> np.ndarray:
 def build(
     history: np.ndarray,
     forecast_daily_mean: np.ndarray,
-    service_level: float = DEFAULT_SERVICE_LEVEL,
+    service_level: float | np.ndarray = DEFAULT_SERVICE_LEVEL,
     review_period: int = DEFAULT_REVIEW_PERIOD,
     case_pack: np.ndarray | None = None,
     min_order_qty: np.ndarray | None = None,
     n_sims: int = 2000,
     seed: int = 0,
 ) -> Policy:
-    """Derive (s, S) for every series at one service level."""
+    """Derive (s, S) for every series.
+
+    `service_level` may be a scalar (one target for the whole catalogue) or an
+    array with one target per series. The array form is what the allocation step
+    produces: the measured frontier has no interior optimum, so the useful
+    question is not "what uniform level?" but "which series deserve the stock?".
+    """
     n_series = history.shape[0]
+    per_series = isinstance(service_level, np.ndarray)
 
     # Two simulations: one over L alone (for s), one over T + L (for S).
     lt_only: LeadTimeDemand = simulate(
@@ -125,8 +132,12 @@ def build(
         cover_review_period=True,
     )
 
-    s = lt_only.quantile(service_level)
-    big_s = cycle.quantile(service_level)
+    if per_series:
+        s = lt_only.quantile_per_series(service_level)
+        big_s = cycle.quantile_per_series(service_level)
+    else:
+        s = lt_only.quantile(service_level)
+        big_s = cycle.quantile(service_level)
 
     e_lt = lt_only.mean()
     e_cycle = cycle.mean()
@@ -145,7 +156,7 @@ def build(
         safety_stock=np.clip(np.ceil(s) - e_lt, 0, None).astype(np.float32),
         expected_lt_demand=e_lt.astype(np.float32),
         expected_cycle_demand=e_cycle.astype(np.float32),
-        service_level=service_level,
+        service_level=float(np.mean(service_level)) if per_series else service_level,
         review_period=review_period,
         case_pack=case_pack.astype(np.float32),
         min_order_qty=min_order_qty.astype(np.float32),

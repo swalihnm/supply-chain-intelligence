@@ -97,35 +97,6 @@ silently disappear.
 
 ---
 
-## A10 — Promotions are inferred from price, and the lift estimate is not causal
-
-**Status:** live, affects `promo_lift_analysis.sql` only. Nothing here feeds a
-model yet.
-
-M5 has no promotion flag, so promotions are inferred as weeks priced below a
-trailing 8-week reference maximum.
-
-**The measured result is odd and worth stating plainly:** deep discounts lift
-demand a lot (FOODS 20–35% off: +103%), but *shallow* discounts associate with
-**lower** demand (FOODS 5–20% off: −27% to −30%). The effect survives both a
-volume-weighted and an unweighted per-cell estimator, so it is not an
-aggregation artifact.
-
-**Most likely cause: endogeneity, not a real negative price response.**
-Retailers apply modest markdowns reactively to products already slowing down.
-Matched controls hold item, store, weekday and quarter fixed, but they cannot
-hold fixed the retailer's private reason for discounting.
-
-**Consequence for later work:** do not read a promotional uplift factor off this
-table into the optimizer. Price belongs in the model as a controlled feature.
-
-**One method note:** the promotion-vs-markdown split uses a forward-looking
-price-recovery test. That is legitimate in a descriptive report run once over
-history, and would be leakage in the feature layer. Promo features that reach
-`features/` must be built from trailing information only.
-
----
-
 ## A3 — Weekly prices held flat within the week
 
 **Status:** deferred to the feature layer.
@@ -156,13 +127,141 @@ than smooth trends.
 
 ---
 
-## To be filled in as the project progresses
+## A5 — The observed baseline is reconstructed, not observed
 
-- **A5** — reconstruction method for the observed baseline replenishment policy _(week 3)_
-- **A6** — holding cost `h`, stockout penalty `p`, ordering cost `K` _(week 3, with sensitivity analysis)_
-- **A7** — lead time distribution _(week 3)_
-- **A8** — no supplier-side constraints or multi-echelon transshipment modelled
-- **A9** — the counterfactual is a simulation, not an experiment
+**Status:** live. This is the assumption the headline number rests on entirely.
+
+M5 contains no inventory data — no stock levels, no purchase orders, no
+receipts. So there is no observed replenishment policy to compare against.
+
+**The reconstruction:** an (s, S) policy of the same structure, driven by what a
+conventional replenishment system actually does — a 28-day moving-average
+forecast and textbook normal-approximation safety stock — with its
+service-level parameter bisected until its *simulated* fill rate matches the
+fill rate implied by the stockout proxy on real data.
+
+**Why calibrate rather than pick a number:** a retailer running a naive system
+is not aiming at 95% and hitting it. They achieve whatever the data says they
+achieved. Tuning the baseline to fail as often as the real stores failed is
+what stops it being a strawman that the new method beats trivially.
+
+**Bias:** unknown in direction, and it could be large. If real stores ran a
+*better* policy than a moving average with normal safety stock, the baseline is
+too weak and the reported saving is overstated. If they ran worse — manual
+ordering, fixed par levels — it is understated. Nothing in M5 can settle this.
+
+**Second-order assumption inside it:** converting a stockout *day rate* (3.99%)
+into a unit *fill rate* requires assuming how much demand was lost on a stockout
+day. We assume the series' own average daily demand. Real stockouts are more
+likely on high-demand days, so this probably understates lost units and
+therefore overstates the observed fill rate.
+
+---
+
+## A6 — Every cost parameter is assumed
+
+**Status:** live, with full-factorial sensitivity reported.
+
+| Parameter | Default | Basis |
+|---|---|---|
+| gross margin | 0.25 | US grocery retail typically 22–28% |
+| holding rate | 0.25/year | Standard retail carrying cost: capital, warehousing, shrinkage, obsolescence |
+| stockout penalty | 1.5 × lost margin | Lost margin plus something for the customer who goes elsewhere |
+| order cost | $0.50/line | Marginal admin cost of one more line on a truck already going to the store |
+
+None of these are in the data. M5 gives a selling price and nothing else
+economic.
+
+**This matters more than it looks.** The ratio between holding and stockout cost
+determines the entire answer. Over a ~12-day exposure window a held unit costs
+about $0.025 while a lost unit costs about $1.50 — a factor of ~26. That single
+ratio is why the measured service-level frontier has no interior minimum.
+
+Sensitivity is reported across a full factorial rather than one-at-a-time,
+because holding cost and stockout penalty push the optimum in opposite
+directions and can partially cancel.
+
+**The defensible claim is never "this saves X". It is "this saves X under these
+stated assumptions, and here is how X moves when they change."**
+
+---
+
+## A7 — Lead time and pack sizes are invented
+
+**Status:** live.
+
+Lead time is assumed uniform on 3–7 days, typical for grocery DC-to-store
+replenishment. M5 has no supplier data at all.
+
+Case packs are assigned by price band (cheap items in 12s, expensive in 1s) on
+the reasoning that cheap fast-movers ship in bigger cases. This is a fabrication
+with a plausible shape. Its only real effect is to coarsen order quantities,
+which raises average inventory slightly and reduces the order count.
+
+**Bias:** a longer or more variable lead time would raise safety stock across
+the board. The comparison between methods is largely insulated, since every
+policy faces the same assumed distribution.
+
+---
+
+## A8 — Structural limits of the model
+
+- **No supplier-side constraints.** No supplier minimums, no truck capacity, no
+  order-frequency limits beyond the review period.
+- **No multi-echelon transshipment.** Stores are modelled independently. Real
+  networks move stock laterally, which reduces total safety stock materially —
+  so a genuine multi-echelon system would beat everything reported here.
+- **No substitution.** A stockout is modelled as a fully lost sale. In grocery,
+  customers frequently buy the adjacent brand, so the true cost of a stockout is
+  lower than modelled for substitutable goods and higher for destination items.
+- **No shelf-life or spoilage**, despite FOODS being 47% of the catalogue.
+
+---
+
+## A9 — The counterfactual is a simulation, not an experiment
+
+**Status:** live, and it is the deepest limitation in the project.
+
+Every policy is evaluated by replaying **the same realised demand** through a
+simulated inventory system. That embeds a real circularity: observed sales were
+themselves shaped by the stockouts the real stores had, and a policy that
+prevented those stockouts would have sold more than the data records.
+
+The stockout proxy mitigates this for training but cannot manufacture the demand
+that was never observed. So the simulation systematically understates what a
+better policy would have achieved.
+
+A real deployment would need a phased rollout with a control group of stores —
+not a replay.
+
+---
+
+## A10 — Promotions are inferred from price, and the lift estimate is not causal
+
+**Status:** live, affects `promo_lift_analysis.sql` only. Nothing here feeds a
+model yet.
+
+M5 has no promotion flag, so promotions are inferred as weeks priced below a
+trailing 8-week reference maximum.
+
+**The measured result is odd and worth stating plainly:** deep discounts lift
+demand a lot (FOODS 20–35% off: +103%), but *shallow* discounts associate with
+**lower** demand (FOODS 5–20% off: −27% to −30%). The effect survives both a
+volume-weighted and an unweighted per-cell estimator, so it is not an
+aggregation artifact.
+
+**Most likely cause: endogeneity, not a real negative price response.**
+Retailers apply modest markdowns reactively to products already slowing down.
+Matched controls hold item, store, weekday and quarter fixed, but they cannot
+hold fixed the retailer's private reason for discounting.
+
+**Consequence for later work:** do not read a promotional uplift factor off this
+table into the optimizer. Price belongs in the model as a controlled feature.
+
+**One method note:** the promotion-vs-markdown split uses a forward-looking
+price-recovery test. That is legitimate in a descriptive report run once over
+history, and would be leakage in the feature layer. Promo features that reach
+`features/` must be built from trailing information only.
 
 ---
 

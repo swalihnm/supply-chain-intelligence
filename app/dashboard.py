@@ -29,12 +29,20 @@ def load():
     return get_store()
 
 
+S = None
 try:
     S = load()
 except ArtifactsMissing as exc:
     st.error("Artifacts not built yet.")
     st.code(str(exc))
     st.stop()
+
+if S is None:
+    # st.stop() raises only inside the Streamlit runtime. Outside it - a bare
+    # import, a smoke test, a linter - execution would fall through and every
+    # later reference to S would be a NameError, which hides the real problem
+    # (missing artifacts) behind a confusing traceback.
+    raise SystemExit("Serving artifacts are missing; see the message above.")
 
 DARK = st.sidebar.toggle("Dark charts", value=False)
 VIEW = st.sidebar.radio(
@@ -72,7 +80,17 @@ if VIEW == "Executive":
         missing("Counterfactual results", "uv run python scripts/run_optimizer.py")
     else:
         base = cf.filter(pl.col("policy") == "baseline")
-        opt = cf.filter(pl.col("policy") == "optimized")
+        # The recommended arm is the per-series allocation. Named candidates are
+        # tried in order rather than hardcoding one, so renaming a policy in the
+        # optimizer degrades to a visible fallback instead of a silently empty
+        # panel - which is exactly what happened when "optimized" became
+        # "cost_optimal_allocation".
+        opt = cf.filter(pl.col("policy") == "")
+        for candidate in ("cost_optimal_allocation", "optimized", "uniform_empirical"):
+            hit = cf.filter(pl.col("policy") == candidate)
+            if hit.height:
+                opt = hit
+                break
         if base.height and opt.height:
             b, o = base.row(0, named=True), opt.row(0, named=True)
             delta_pct = 100.0 * (o["total_cost"] - b["total_cost"]) / b["total_cost"]
@@ -98,7 +116,7 @@ if VIEW == "Executive":
             c4.metric("Orders placed", f"{o['orders_placed']:,.0f}")
 
             if ci is not None:
-                row = ci.filter(pl.col("comparison").str.contains("optimized"))
+                row = ci.filter(pl.col("comparison").str.contains(opt["policy"][0], literal=True))
                 if row.height:
                     r = row.row(0, named=True)
                     st.caption(
@@ -109,8 +127,12 @@ if VIEW == "Executive":
 
     st.subheader("Service level vs cost")
     st.caption(
-        "The whole trade-off in one chart. Cost rises non-linearly with service "
-        "because each extra point of service buys a thinner slice of the demand tail."
+        "Measured on the test window, cost **falls** as service rises across the "
+        "whole tested range — there is no interior optimum. That is the cost "
+        "model's arithmetic: over a ~12-day exposure window a held unit costs "
+        "about $0.025 while a lost unit costs about $1.50, so stocking more keeps "
+        "paying. It is also why the recommendation is a per-series allocation "
+        "rather than one target for the catalogue."
     )
     if frontier is None:
         missing("Frontier", "uv run python scripts/run_optimizer.py")
@@ -123,7 +145,11 @@ if VIEW == "Executive":
         b_cost = float(bl["total_cost"][0]) if bl.height else None
 
         targets = pts["target_service_level"].to_numpy()
-        rec = int(np.argmin(np.abs(targets - 0.95))) if len(targets) else None
+        # Mark 0.99 - where the EXPECTED-cost curve minimises. Marking 0.95
+        # would point at a conventional target the data does not support, and
+        # marking the realised-cost minimum would just point at the right-hand
+        # end of a monotone curve.
+        rec = int(np.argmin(np.abs(targets - 0.99))) if len(targets) else None
 
         st.plotly_chart(
             viz.service_level_frontier(

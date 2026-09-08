@@ -9,14 +9,51 @@ Spec: `PROJECT-01-supply-chain-forecasting.md` (the original brief).
 
 ## Current state
 
-**Week 1: COMPLETE.** Week 2: in progress.
+**All four weeks built, run end to end, and documented. 101 tests pass.**
 
 | Week | Deliverable | Status |
 |---|---|---|
 | 1 | Ingestion + warehouse + SQL analytics | ✅ complete |
-| 2 | Feature store + model ladder + backtest harness | 🔨 in progress |
-| 3 | Optimizer + counterfactual | ⬜ not started |
-| 4 | Dashboard + deploy + docs | ⬜ not started |
+| 2 | Feature store + model ladder + backtest harness | ✅ complete |
+| 3 | Optimizer + counterfactual + shadow prices | ✅ complete |
+| 4 | API + dashboard + docs | ✅ complete (container unverified) |
+
+### Headline
+
+Per-series cost-optimal allocation vs reconstructed baseline, on the locked test
+window: **−5.0% cost at +1.0 point fill rate**, CI −8.5% to −1.9%. Every one of
+27 cost-assumption cells shows a saving.
+
+Global LightGBM: **0.8446 WRMSSE** on the locked test set vs 0.8626 for the best
+baseline (TSB).
+
+### What is genuinely left
+
+1. **Deploy for a live URL.** Docker is NOT installed on this machine, so the
+   Dockerfile / compose / entrypoint are written but have never been built or
+   run. This is the single highest-value remaining item — the spec is right that
+   a live URL matters more than the code.
+2. **Hierarchical reconciliation** (`models/reconcile.py` does not exist). The
+   one substantive method from the spec that was not built. Coherent forecasts
+   across item → dept → category → store → state would matter to anyone planning
+   at category level.
+3. **Statistical model rung** (AutoETS / AutoARIMA / Theta via `statsforecast`)
+   was skipped for compute budget. The ladder goes baselines → global ML.
+4. Optional: FRED macro covariates (client written, dormant, needs a free key);
+   Favorita cross-validation; Google Trends. All three are explicit cut items in
+   the spec.
+
+### Reproduce everything
+
+```bash
+uv sync --extra dev --extra models --extra optimize --extra app
+uv run sci ingest all
+uv run sci warehouse build
+uv run python scripts/run_model_ladder.py      # ~40 min
+uv run python scripts/run_optimizer.py         # ~15 min
+uv run python scripts/build_serving_bundle.py
+uv run pytest                                  # 101 tests
+```
 
 ---
 
@@ -35,7 +72,7 @@ Spec: `PROJECT-01-supply-chain-forecasting.md` (the original brief).
 uv sync --extra dev
 uv run sci ingest all        # M5 from local zip + Open-Meteo weather
 uv run sci warehouse build   # ~4 min -> 163 MB DuckDB
-uv run pytest                # 26 tests
+uv run pytest                # 101 tests
 ```
 
 ---
@@ -60,13 +97,60 @@ uv run pytest                # 26 tests
 ### Code
 
 - `sci/` — config, logging, checksum manifest, warehouse runner, Typer CLI
+- `features/` — `panel_matrix.py` (dense arrays), `build_features.py` (33 features)
+- `models/` — `baselines.py`, `global_ml.py`, `quantile.py`
+- `optimize/` — `cost_model.py`, `lead_time_demand.py`, `policy.py`,
+  `expected_cost.py`, `constrained_solver.py`
+- `evaluation/` — `protocol.py` (frozen), `metrics.py`, `backtest.py`,
+  `simulate_counterfactual.py`
+- `app/` — `api.py`, `dashboard.py`, `viz.py`, `store.py`
+- `scripts/` — `run_model_ladder.py`, `run_optimizer.py`,
+  `build_serving_bundle.py`, `stage_deploy.py`
 - `ingest/` — `m5_loader.py`, `weather_client.py`, `fred_client.py` (dormant)
 - `sql/ddl/` → `sql/transform/` → `sql/analytics/` (pipeline order matters)
-- `tests/` — 26 tests, all passing
+- `tests/` — 101 tests, all passing
 
 ---
 
-## Decisions already made — do not silently revisit
+## Week 2–3 decisions — do not silently revisit
+
+7. **Backtest protocol is frozen in `evaluation/protocol.py`** and imported
+   everywhere. 5 rolling-origin folds, 28-day horizon, locked test set d1914–1941
+   scored once. `tests/test_protocol.py` asserts no overlap and no test leakage.
+
+8. **Direct multi-step design: every lag ≥ 28 days.** No recursion, so the
+   leakage audit is arithmetic. Costs some short-horizon accuracy; worth it.
+
+9. **Weather is CLIMATOLOGY only** (state × day-of-year, from days before each
+   fold origin) plus a t−28 anomaly. Actual future weather would be leakage —
+   nobody has a 28-day rainfall forecast. A test asserts no other weather
+   feature can appear.
+
+10. **Policies are compared at MATCHED achieved fill rate**, found by bisection.
+    A service-level *parameter* and a fill rate are different quantities and the
+    normal and empirical methods convert between them differently. An earlier
+    grid-based version left a 0.56-point fill gap and reported a 9% cost
+    difference that was purely the service gap.
+
+11. **Service levels are chosen on EXPECTED cost** (`optimize/expected_cost.py`),
+    derived from the forecast's lead-time demand distribution — never from
+    realised demand. Choosing on realised cost produced a 39% "saving" that was
+    hindsight. Realised demand is touched once, to evaluate the chosen allocation.
+
+12. **The realised-cost frontier is monotone** to 99.9% — no interior optimum,
+    because a lost unit costs ~26× holding one over the exposure window. The
+    *expected*-cost curve does turn, at 0.99. This is why the recommendation is a
+    per-series allocation rather than a uniform target.
+
+13. **LP relaxation, not MIP**, for the constrained allocation. At most
+    (#side-constraints) series can be fractional — measured 11 of 30,490, against
+    a bound of 11 (10 store rows + 1 budget row).
+    Fractional assignments round toward the SMALLER footprint so capacity rows
+    stay feasible.
+
+---
+
+## Week 1 decisions — do not silently revisit
 
 1. **Availability filter.** `core.panel` inner-joins sales to price. A missing
    weekly `sell_price` means the store did not carry that SKU. Verified: the
@@ -123,3 +207,30 @@ Scaffolded the repo, ingested M5 + weather, built the star schema, the panel
 transform, the stockout proxy and all five analytics reports. Two self-corrections
 during the session (lifetime→local stockout rate; broken alpha sensitivity) are
 written up in `docs/02-methodology.md` rather than quietly patched.
+
+### Session 2 — 2026-09-09
+
+Built weeks 2, 3 and 4. Ran the full model ladder and optimizer end to end.
+
+Four self-corrections, all written into the docs rather than quietly patched:
+
+1. **Comparison was rigged.** Policies ran at different achieved service levels,
+   so a "32% more expensive" result was measuring the service gap, not the
+   method. Fixed by bisecting every policy onto the same fill rate.
+2. **Allocation overfit.** Service levels were chosen by simulating each
+   candidate on realised test demand and taking the per-series minimum -
+   selection on the outcome. A 39% "saving" that was hindsight. Now chosen on
+   forecast-derived expected cost (`optimize/expected_cost.py`).
+3. **False claim in a docstring.** `cost_model.service_level` asserted cycle
+   service always exceeds fill rate. It does not - which is higher depends on
+   whether failures are rare-and-large or frequent-and-small. A test now pins
+   both orderings.
+4. **Dashboard silently blank.** Renaming the recommended policy left the
+   executive view filtering for a name that no longer existed; it rendered
+   nothing rather than erroring. Caught by `tests/test_dashboard.py`, which runs
+   every view through Streamlit's AppTest.
+
+The headline finding was not the expected one: a better forecast bought nothing
+(CI spans zero), an empirical safety-stock distribution at a uniform service
+level was *worse* than the textbook normal approximation, and the entire gain
+came from the per-series allocation. That is reported as found.

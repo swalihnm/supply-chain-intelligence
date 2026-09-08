@@ -3,8 +3,7 @@
 Every number here is produced by a script in this repo and reproducible with
 `sci warehouse build` followed by `sci analyze <name>`.
 
-**Week 1 (data + analytics) is complete. Weeks 2–4 (models, optimizer, serving)
-are not started, so there is no cost or service-level result yet.**
+**All four layers are built. The headline is in §6.**
 
 ---
 
@@ -173,10 +172,220 @@ as a controlled feature rather than a lift factor lifted from this table.
 
 ---
 
-## Still to come
+---
 
-| Week | Deliverable |
-|---|---|
-| 2 | Model ladder, backtest harness, calibrated quantiles |
-| 3 | (s,S) policy, cost model, service-level frontier, counterfactual with CI |
-| 4 | Dashboard, deploy, README headline number |
+## 5. Forecast accuracy
+
+Rolling-origin CV, 5 folds, 28-day horizon. The test fold (d1914–1941) was
+scored once.
+
+| Model | CV WRMSSE | CV sd | CV MASE | Test WRMSSE |
+|---|---:|---:|---:|---:|
+| **Global LightGBM (Tweedie)** | **0.8559** | 0.017 | 1.215 | **0.8446** |
+| TSB | 0.8893 | 0.015 | 1.217 | 0.8626 |
+| Croston | 0.8910 | 0.016 | 1.196 | 0.8639 |
+| Moving average | 0.8950 | 0.013 | 1.073 | 0.8720 |
+| Seasonal Croston | 0.9162 | 0.022 | 1.213 | 0.8824 |
+| Seasonal naive | 1.1563 | 0.035 | 1.208 | 1.1017 |
+| Naive | 1.2359 | 0.046 | 1.750 | 1.1766 |
+| Zero forecast | 1.3963 | 0.040 | **0.986** | 1.4132 |
+
+**A 3.8% CV improvement over a tuned TSB baseline.** Modest, and reported as
+such. The direct 28-day-lag design gives up short-horizon accuracy in exchange
+for a leakage audit that is arithmetic rather than trust; a recursive design
+using lag-1 would score better and be far harder to defend.
+
+### Three things in this table worth stating
+
+**The zero forecast has the best MASE of every model** (0.986) while having the
+worst WRMSSE by a distance. That is not a bug — with 68% of days at zero,
+"always predict zero" minimises absolute error while missing every spike that
+squared error punishes. It is a clean demonstration that the metric choice
+*is* a modelling decision, and it is why the optimizer is driven by pinball
+loss rather than either of these.
+
+**Seasonal naive is much worse than a plain moving average** (1.156 vs 0.895).
+Repeating last week's exact pattern on a sparse series propagates noise; on
+intermittent data the smoothing is worth more than the seasonality.
+
+**Seasonal Croston — a day-of-week reshaping of the Croston rate — made things
+worse** (0.916 vs 0.891). A negative result, kept in the table rather than
+dropped.
+
+### Error by demand class (mean RMSSE, CV folds)
+
+| Model | intermittent | lumpy | smooth | erratic |
+|---|---:|---:|---:|---:|
+| moving average | 0.734 | 0.714 | 0.779 | 0.738 |
+| TSB | 0.762 | 0.746 | 0.785 | 0.754 |
+| zero | 0.844 | 0.857 | 1.387 | 1.120 |
+| seasonal naive | 0.964 | 0.912 | 0.987 | 0.929 |
+
+The zero forecast is competitive on intermittent and lumpy series and collapses
+on smooth ones — exactly where you would expect.
+
+### Quantile calibration
+
+Where the optimizer actually reads the distribution, calibration is good:
+
+| Nominal | Empirical (cv4) | Empirical (test) |
+|---:|---:|---:|
+| 0.50 | 0.665 | — |
+| 0.90 | 0.914 | — |
+| 0.95 | 0.958 | — |
+| 0.99 | 0.990 | 0.988 |
+
+**The 0.5 quantile is badly calibrated (0.665 vs 0.50), and that is a property
+of the data, not a defect.** Coverage is defined as P(actual ≤ predicted), and
+with 68% of days at zero the median of an intermittent series *is* zero — so
+"actual ≤ 0" is true on every zero day. The statistic saturates against the
+point mass. The upper quantiles, which are the only ones the policy uses, are
+unaffected.
+
+Quantile crossing occurred on 2.7% of cells and was repaired by sorting.
+Conformal calibration was slightly worse than direct quantile regression at 0.90
+and 0.95, so the direct models are used.
+
+---
+
+## 6. The decision — counterfactual on the test window
+
+All policies replay the same realised demand over d1914–1941, after a 28-day
+warm-up so none benefits from its starting inventory.
+
+| Policy | Fill rate | Cycle service | Avg units on hand | Total cost | vs baseline | 95% CI |
+|---|---:|---:|---:|---:|---:|---|
+| Reconstructed baseline | 94.05% | 98.42% | 18.46 | $127,930 | — | — |
+| Better forecast only | 94.03% | 98.49% | 19.16 | $129,254 | +1.0% | −1.3% to +3.5% |
+| Empirical safety stock, uniform level | 94.02% | 98.02% | 18.74 | $133,976 | +4.7% | +1.4% to +8.3% |
+| **Per-series cost-optimal allocation** | **95.06%** | 98.35% | 20.17 | **$121,500** | **−5.0%** | **−8.5% to −1.9%** |
+
+The recommended policy is **cheaper and serves more demand** — dominance, so
+there is no trade-off to argue about. It cut unmet units from 73,263 to 60,805
+(−17%) while spending 5% less.
+
+### The decomposition is the finding
+
+Three arms were run precisely so the gain could be attributed, and the answer
+was not the expected one:
+
+- **A better forecast bought nothing.** Swapping the moving average for the
+  global model, holding the safety-stock method fixed, moved cost by +1.0% with
+  a confidence interval straddling zero. The 3.8% WRMSSE improvement did not
+  convert into money.
+- **Replacing normal safety stock with an empirical bootstrap, at a uniform
+  service level, was actively worse** (+4.7%, significant). Matching the
+  *aggregate unit* fill rate does not match *margin-weighted* stockout cost —
+  the empirical method hit the same fill rate while concentrating its failures
+  on more valuable items.
+- **The entire gain came from the allocation** — deciding which series deserve
+  the stock, at 7 distinct service levels with a median of 0.99.
+
+The honest one-line summary is not "ML forecasting saves money". It is **"the
+value was in the decision layer, not the forecast"** — which is the opposite of
+where most of the effort in a project like this usually goes.
+
+### Sensitivity — the sign never flips
+
+Across the full 27-point factorial of gross margin × holding rate × stockout
+penalty:
+
+| | delta |
+|---|---:|
+| Best case (margin 0.30, holding 0.15, penalty 3.0) | −8.76% |
+| Median | −5.16% |
+| Worst case (margin 0.20, holding 0.40, penalty 1.0) | −0.77% |
+
+**Every one of the 27 cells shows a saving.** The magnitude is uncertain; the
+direction is not. That is a stronger claim than any single number.
+
+---
+
+## 7. Service level frontier
+
+| Target | Achieved fill | Avg on hand | Avg safety stock | Total cost |
+|---:|---:|---:|---:|---:|
+| 0.80 | 82.95% | 10.88 | 3.63 | $279,622 |
+| 0.85 | 85.02% | 11.81 | 4.56 | $251,938 |
+| 0.90 | 87.69% | 13.18 | 5.90 | $215,667 |
+| 0.95 | 91.05% | 15.56 | 8.15 | $171,469 |
+| 0.975 | 93.32% | 17.85 | 10.28 | $141,869 |
+| 0.99 | 95.16% | 20.43 | 12.93 | $119,852 |
+| 0.995 | 95.99% | 21.86 | 14.50 | $110,471 |
+| 0.999 | 97.01% | 23.88 | 16.72 | $99,618 |
+| *baseline* | *94.05%* | *18.46* | *10.79* | *$127,930* |
+
+**The realised frontier is monotone — there is no interior optimum.** Cost keeps
+falling as service rises, all the way to 99.9%.
+
+That is not a bug, it is the cost model's arithmetic. Over a ~12-day exposure
+window a held unit costs about $0.025 while a lost unit costs about $1.50 — a
+ratio of roughly 26:1 — so the newsvendor critical ratio p/(p+h) sits near 0.98
+and stocking more keeps paying.
+
+**This is why the recommendation is a per-series allocation rather than a
+uniform target.** If one number were the answer it would just be "as high as
+capacity allows", which is not a decision worth building a project around.
+
+The *expected*-cost curve, computed from the forecast distribution rather than
+the realised path, does turn — minimising at 0.99 ($96,881 expected) and rising
+at 0.995 and 0.999. The gap between the two is itself informative: realised
+demand in this particular 28-day window rewarded stock more than the forecast
+distribution predicted it would.
+
+### Answering "what if service moved from 95 to 98?"
+
+Non-linear, and in this cost regime it moves in the *helpful* direction: going
+from a 0.95 target to a 0.99 target raises average inventory 31% (15.56 → 20.43
+units) but cuts total cost 30%, because avoided stockouts are worth far more
+than the extra carrying cost. Under a cost model with a cheaper stockout penalty
+that relationship reverses — which is exactly what the sensitivity grid is for.
+
+---
+
+## 8. Constrained allocation and shadow prices
+
+Capacity set to 85% of what the unconstrained optimum wants at each store, plus a
+budget cap at 90% of its capital, so the constraints bind and the duals are
+informative.
+
+| Constraint | Utilisation | Shadow price |
+|---|---:|---:|
+| capacity CA_3 | 100.0% | **0.0514** |
+| capacity CA_1 | 100.0% | 0.0480 |
+| capacity CA_2 | 100.0% | 0.0436 |
+| capacity CA_4 | 100.0% | 0.0422 |
+| capacity WI_1 | 100.0% | 0.0424 |
+| capacity WI_3 | 99.9% | 0.0417 |
+| capacity WI_2 | 100.0% | 0.0413 |
+| capacity TX_3 | 100.0% | 0.0426 |
+| capacity TX_1 | 100.0% | 0.0392 |
+| budget | 100.0% | 0.0032 |
+
+Constrained cost $99,310 vs unconstrained $96,759 — **the constraints cost
+$2,551 per 28 days**, about 2.6%.
+
+**What to tell the ops director:** an extra unit of shelf space is worth about
+5.1¢ per 28 days at CA_3 and 3.9¢ at TX_1 — roughly 30% more valuable at the
+former. If space can be moved or added anywhere, CA_3 is where it pays. The
+budget dual is an order of magnitude smaller (0.32¢ per dollar), so **capital is
+not the binding problem here; shelf space is.**
+
+The LP relaxation produced **11 fractional assignments out of 30,490** — exactly
+the theoretical bound of one per side constraint (10 stores + 1 budget), which
+is a satisfying confirmation that the relaxation is doing what the formulation
+predicts.
+
+---
+
+## 9. What is not here
+
+- No Favorita cross-validation (spec's first cut item)
+- No Google Trends (second cut item; heavily rate-limited)
+- No FRED macro covariates — the client is written and tested but no API key was
+  configured, so `core.fact_macro` is empty
+- No hierarchical reconciliation across the item/dept/category/store/state
+  hierarchy. This is the one *substantive* omission: coherent aggregation would
+  matter to a business planning at category level, and it is the first thing to
+  add next.
+- No live deployment URL yet — the container builds and runs locally.

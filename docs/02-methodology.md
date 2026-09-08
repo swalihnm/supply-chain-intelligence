@@ -164,12 +164,189 @@ version accepted single-observation promo cells — almost all of them zero, sin
 
 ## Layer 2 — Modelling
 
-_Week 2. Backtest protocol will be defined before any model is fit._
+### The protocol came first
+
+`evaluation/protocol.py` contains no modelling code and imports nothing that
+fits anything. It was written before any model existed, and every other module
+imports the folds from it rather than defining its own.
+
+- Rolling-origin CV, 5 folds, 28-day horizon each
+- Training for a fold ends the day before its validation window opens — no gap, no overlap
+- The final 28 days (d1914–1941) are a **locked test set**, scored once
+- Validation windows are disjoint, so no observation is scored twice
+
+`tests/test_protocol.py` asserts all of it. The point is that the rules cannot
+be quietly adjusted after seeing a result, which is the easiest way to fool
+yourself in a forecasting project.
+
+### Metrics, and why three
+
+| Metric | Question it answers |
+|---|---|
+| WRMSSE | The M5 official metric. Scale-free and dollar-weighted, so being wrong about a high-revenue SKU costs more. |
+| MASE | Scale-free absolute error. Reported alongside because squared error on intermittent data is dominated by a handful of spike days. |
+| Pinball | The one that matters downstream. The optimizer consumes quantiles, so a great point forecast with badly calibrated tails is useless to it. |
+
+All are NaN-aware: a day outside a series' availability window is skipped, not
+scored as zero error.
+
+### The ladder
+
+1. **Baselines** — seasonal naive, moving average, Croston, TSB, and a zero
+   forecast. Tuned properly and kept to the end, because a gain over a bad
+   baseline is not a gain. The zero forecast earns its place: on absolute-error
+   terms it is genuinely competitive, which is a fact about the metric worth
+   knowing.
+2. **Global LightGBM** — one Tweedie model across all 30,490 series.
+
+Tweedie rather than squared error because the target is a zero-inflated
+non-negative count: 68% of observed days are zero, and a compound
+Poisson-gamma puts a point mass there.
+
+### Why one global model instead of 30,490 local ones
+
+- Data per series is thin and mostly zero. A local model for an intermittent
+  SKU-store fits a handful of non-zero points and overfits them.
+- Day-of-week, SNAP, holiday and price effects are properties of the category
+  and store, not of one SKU. Estimating them 30,490 times separately gets a
+  noisier answer every time.
+- New series work immediately. With a median launch at d=160 and half the
+  catalogue starting after d=100, this is not a corner case here.
+- One artifact to train, validate, ship and monitor.
+
+The cost is that a genuinely idiosyncratic series gets pulled toward the crowd.
+The error decomposition by Syntetos-Boylan class makes that visible.
+
+### Leakage: a direct multi-step design
+
+Every lag and rolling statistic is offset by at least 28 days, so a feature for
+target day *t* reads only day *t−28* or earlier. That costs some short-horizon
+accuracy — the model never sees yesterday — but it removes recursion entirely
+and makes the leakage audit **arithmetic rather than trust**.
+`tests/test_features.py` checks the lag values against the source matrix
+directly.
+
+### The weather decision
+
+Feeding actual future weather into a 28-day forecast is leakage, and the kind
+that quietly inflates a headline. Nobody has a usable 28-day forecast of daily
+rainfall.
+
+So the model gets **climatology** — the historical average for that state and
+day-of-year, computed only from days strictly before the forecast origin. That
+is genuinely knowable in advance; it is just seasonality. One actual-weather
+feature survives: the anomaly at *t−28*, which is observed by forecast time.
+
+This is weaker than real weather data would be. That is the honest price of not
+cheating, and a test asserts no other weather feature can appear.
+
+### Quantiles
+
+Two routes, both produced and compared:
+
+1. **Direct quantile regression** — one LightGBM per level. Independently
+   fitted levels can cross; they are sorted per row afterwards and the crossing
+   rate is reported rather than hidden.
+2. **Split conformal** — distribution-free calibration of the point model's
+   residuals, computed within series class so an intermittent series is not
+   calibrated using a smooth series' errors.
+
+The interesting question is not which has the better pinball loss but whether
+either is **calibrated**. A 0.95 quantile that only covers 88% of outcomes makes
+the optimizer buy a service level it will not achieve in the store.
+
+---
 
 ## Layer 3 — Optimization
 
-_Week 3._
+### The policy
+
+Periodic review every T=7 days. At a review, if inventory **position** (on hand
+plus on order) has fallen to the reorder point *s*, order up to *S*.
+
+```
+s = quantile_q( demand over L )       protects until an order placed now arrives
+S = quantile_q( demand over T + L )   protects until the order AFTER that arrives
+```
+
+S covers T+L, not L. That is the classic mistake in periodic-review systems:
+after ordering you wait L days for delivery **and** another T days before you
+can order again, so sizing S on L alone under-stocks by about a review period of
+demand every cycle.
+
+### Why not z·σ·√L
+
+The textbook safety-stock formula assumes normal, i.i.d. demand and a constant
+lead time. All three are false here: 72.6% of series are intermittent and
+zero-inflated, demand is autocorrelated and day-of-week seasonal, and lead time
+is a distribution. Applied to an intermittent series the formula produces
+negative reorder points at low service levels and badly wrong ones in the tail.
+
+Instead, lead-time demand is simulated by **scaled block bootstrap**: draw a
+lead time, draw a random start in the series' own clean history, take that many
+*contiguous* days and sum, scale to the forecast level, repeat.
+
+Contiguous blocks are the point. Sampling individual days independently destroys
+the autocorrelation and understates the variance of the sum — exactly the error
+√L makes. Censored days inside a block are imputed with the series' clean mean,
+never zero-filled, or the censoring bias removed in week 1 would walk straight
+back in at the last step.
+
+The normal approximation is still implemented — as the comparison arm, so the
+results can *quantify* what assuming normality costs rather than assert it.
+
+### The allocation, and the overfitting it had to avoid
+
+Choosing a service level per series is the real decision. Two corrections were
+needed to make it honest:
+
+**1. Comparisons must be at matched service.** A service-level *parameter* and
+an achieved *fill rate* are different quantities, and the normal approximation
+and the empirical bootstrap convert one into the other very differently on
+intermittent demand. A first version ran the baseline at whatever parameter
+reproduced observed behaviour and the others at a fixed 0.95, then compared
+cost — and reported the optimized policy as 32% more expensive while it was
+serving 2.8 points less demand. Every policy is now bisected onto the same
+achieved fill rate.
+
+**2. Levels must be chosen on expected cost, not realised cost.** The first
+allocation simulated every candidate level on the realised test demand and took
+the per-series minimum. That is selection on the outcome: each series gets the
+level that happened to work best on the very days the result is reported over.
+It produced a 39% "saving" that was mostly hindsight.
+`optimize/expected_cost.py` now derives cost from the forecast's lead-time
+demand distribution alone; realised demand is touched exactly once, to evaluate
+the chosen allocation.
+
+### Constrained allocation and shadow prices
+
+A multiple-choice knapsack: each series takes one level from K candidates,
+subject to per-store capacity and a total budget.
+
+As an integer program that is 30,490 × 8 = 243,920 binaries, which CBC will not
+close on a laptop. The **LP relaxation is near-exact here**, and not as a
+concession: a basic feasible solution has at most as many basic variables as
+rows, and the assignment constraints force one unit of mass per series, so only
+the *side* constraints can split a series. With 10 store rows plus a budget row,
+at most 11 of 30,490 series can be fractional. Measured: 10.
+
+Those are rounded toward the **smaller footprint**, not the cheaper level, so a
+binding capacity row cannot end up over its limit — rounding toward cost pushed
+utilisation to 100.2% in testing, which is an infeasible answer.
+
+The relaxation also yields what the integer program would not: **duals**. The
+dual on a capacity row is what one more unit of shelf space at that store is
+worth in avoided cost per period — which turns "we are short on space" into
+"space at this store is worth $X and at that one is worth nothing".
+
+---
 
 ## Layer 4 — Serving
 
-_Week 4._
+FastAPI + Streamlit over a compact serving bundle. The full panel matrices are
+~500 MB in memory, which is the wrong thing to put in a container that only
+answers questions about the forecast horizon; `scripts/build_serving_bundle.py`
+reduces it to ~30 MB of numpy arrays.
+
+That is small enough that `POST /simulate` runs a **real** simulation over all
+30,490 series on each call rather than interpolating a precomputed table.
