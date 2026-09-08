@@ -9,7 +9,9 @@ Spec: `PROJECT-01-supply-chain-forecasting.md` (the original brief).
 
 ## Current state
 
-**All four weeks built, run end to end, and documented. 101 tests pass.**
+**All four weeks built and run end to end, plus hierarchical reconciliation.
+123 tests pass. Only the container deploy is outstanding, and it is blocked
+on a credential rather than on work.**
 
 | Week | Deliverable | Status |
 |---|---|---|
@@ -17,6 +19,7 @@ Spec: `PROJECT-01-supply-chain-forecasting.md` (the original brief).
 | 2 | Feature store + model ladder + backtest harness | ✅ complete |
 | 3 | Optimizer + counterfactual + shadow prices | ✅ complete |
 | 4 | API + dashboard + docs | ✅ complete (container unverified) |
+| + | Hierarchical reconciliation (42,840 nodes) | ✅ complete |
 
 ### Headline
 
@@ -26,6 +29,11 @@ window: **−5.0% cost at +1.0 point fill rate**, CI −8.5% to −1.9%. Every o
 
 Global LightGBM: **0.8446 WRMSSE** on the locked test set vs 0.8626 for the best
 baseline (TSB).
+
+Reconciliation: base forecasts disagree by 8.1% at the total level; all four
+methods drive the adding-up violation to exactly zero. `wls_var` improves the
+bottom level 0.8% for free, but bottom-up wins on aggregate levels because the
+bottom model is much stronger than the aggregate ones.
 
 ### What is genuinely left
 
@@ -63,8 +71,9 @@ uv run sci ingest all
 uv run sci warehouse build
 uv run python scripts/run_model_ladder.py      # ~40 min
 uv run python scripts/run_optimizer.py         # ~15 min
+uv run python scripts/run_reconciliation.py    # ~2 min
 uv run python scripts/build_serving_bundle.py
-uv run pytest                                  # 101 tests
+uv run pytest                                  # 123 tests
 ```
 
 ---
@@ -84,7 +93,7 @@ uv run pytest                                  # 101 tests
 uv sync --extra dev
 uv run sci ingest all        # M5 from local zip + Open-Meteo weather
 uv run sci warehouse build   # ~4 min -> 163 MB DuckDB
-uv run pytest                # 101 tests
+uv run pytest                # 123 tests
 ```
 
 ---
@@ -110,7 +119,8 @@ uv run pytest                # 101 tests
 
 - `sci/` — config, logging, checksum manifest, warehouse runner, Typer CLI
 - `features/` — `panel_matrix.py` (dense arrays), `build_features.py` (33 features)
-- `models/` — `baselines.py`, `global_ml.py`, `quantile.py`
+- `models/` — `baselines.py`, `global_ml.py`, `quantile.py`, `statistical.py`,
+  `hierarchy.py`, `reconcile.py`
 - `optimize/` — `cost_model.py`, `lead_time_demand.py`, `policy.py`,
   `expected_cost.py`, `constrained_solver.py`
 - `evaluation/` — `protocol.py` (frozen), `metrics.py`, `backtest.py`,
@@ -120,7 +130,7 @@ uv run pytest                # 101 tests
   `build_serving_bundle.py`, `stage_deploy.py`
 - `ingest/` — `m5_loader.py`, `weather_client.py`, `fred_client.py` (dormant)
 - `sql/ddl/` → `sql/transform/` → `sql/analytics/` (pipeline order matters)
-- `tests/` — 101 tests, all passing
+- `tests/` — 123 tests, all passing
 
 ---
 
@@ -262,3 +272,28 @@ The headline finding was not the expected one: a better forecast bought nothing
 (CI spans zero), an empirical safety-stock distribution at a uniform service
 level was *worse* than the textbook normal approximation, and the entire gain
 came from the per-series allocation. That is reported as found.
+
+### Session 3 — 2026-09-09
+
+Built hierarchical reconciliation and the statistical rung. Two more
+self-corrections, both written into the docs:
+
+5. **AutoETS on all 12,350 aggregate nodes** took over 20 minutes and drove the
+   machine into swap — for `item` and `item x state`, which are still
+   intermittent and where smoothing has least to offer. Now routed: AutoETS on
+   the 154 smooth nodes, TSB on the 12,196 sparse ones. Seconds.
+6. **Bottom-up beat every MinT variant on aggregate levels.** Not the textbook
+   result. It is a fact about these base forecasts — the bottom model is tuned
+   and backtested, the aggregate models are out of the box — and it is reported
+   that way, with the concrete next step rather than a spun conclusion.
+
+**Docker was attempted and is genuinely blocked**, not skipped:
+- Not a Windows admin -> Docker Desktop's installer stops at UAC.
+- WSL2 (Ubuntu 24.04) is installed and virtualization is on, but `sudo` needs a
+  password that cannot be supplied non-interactively.
+- Rootless Docker needs `uidmap` and `iptables`; neither is present and both
+  need sudo to install.
+
+Prerequisites that ARE in place: WSL2, cgroup2, subuid/subgid configured for the
+user, 954 GB free. The one-time command the user must run is in
+"What is genuinely left" above.
