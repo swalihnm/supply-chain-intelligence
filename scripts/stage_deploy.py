@@ -42,6 +42,9 @@ OPTIONAL = [
     "policy_test.csv",
     "abc_xyz_segmentation.csv",
     "stockout_proxy_detection.csv",
+    "reconciliation_accuracy.csv",
+    "reconciliation_coherence.csv",
+    "hierarchy_levels.csv",
 ]
 
 

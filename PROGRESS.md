@@ -29,19 +29,31 @@ baseline (TSB).
 
 ### What is genuinely left
 
-1. **Deploy for a live URL.** Docker is NOT installed on this machine, so the
-   Dockerfile / compose / entrypoint are written but have never been built or
-   run. This is the single highest-value remaining item — the spec is right that
-   a live URL matters more than the code.
-2. **Hierarchical reconciliation** (`models/reconcile.py` does not exist). The
-   one substantive method from the spec that was not built. Coherent forecasts
-   across item → dept → category → store → state would matter to anyone planning
-   at category level.
-3. **Statistical model rung** (AutoETS / AutoARIMA / Theta via `statsforecast`)
-   was skipped for compute budget. The ladder goes baselines → global ML.
-4. Optional: FRED macro covariates (client written, dormant, needs a free key);
+1. **Deploy for a live URL — BLOCKED on a credential, not on work.**
+   Docker cannot be installed from this session:
+   - Docker Desktop needs Windows admin; the session user is not an admin, so
+     `winget install Docker.DockerDesktop` stops at a UAC prompt.
+   - Docker Engine in WSL2 needs the Ubuntu `sudo` password.
+   - Rootless Docker needs `uidmap` + `iptables`, neither installed, and
+     installing them needs sudo.
+
+   Everything else is ready: WSL2 (Ubuntu 24.04) is installed, virtualization is
+   on, cgroup2 is present, subuid/subgid are configured, 954 GB free.
+
+   **The user runs this once, in a WSL terminal:**
+   ```bash
+   sudo apt-get update && sudo apt-get install -y uidmap iptables ca-certificates curl
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker $USER && sudo service docker start
+   ```
+   Then: `uv run python scripts/stage_deploy.py && docker compose up --build`.
+
+2. Optional: FRED macro covariates (client written, dormant, needs a free key);
    Favorita cross-validation; Google Trends. All three are explicit cut items in
    the spec.
+
+3. Optional: full MinT with a shrinkage covariance — see decision 16 for why
+   `wls_var` is used instead.
 
 ### Reproduce everything
 
@@ -147,6 +159,22 @@ uv run pytest                # 101 tests
     a bound of 11 (10 store rows + 1 budget row).
     Fractional assignments round toward the SMALLER footprint so capacity rows
     stay feasible.
+
+14. **Hierarchical reconciliation is solved MATRIX-FREE.** `S'W^-1S` is
+    30,490x30,490 and dense (every pair co-occurs at `total`), which needs ~7.4 GB
+    on a 7.3 GB machine. Preconditioned CG only needs `S'(W^-1(Sv))` — two sparse
+    mat-vecs over 365,880 non-zeros. `tests/test_reconcile.py` verifies it against
+    the dense closed form on a small hierarchy.
+
+15. **Statistical models (AutoETS) run on AGGREGATE levels, not the bottom.**
+    ETS on an intermittent SKU-store series fits noise; aggregates are smooth and
+    weekly-seasonal, which is ETS's home ground. Use each method where its
+    assumptions hold. Fitted via statsforecast's parallel batch API — a serial
+    per-node loop had not cleared 2,000 of 12,350 fits after two minutes.
+
+16. **Full MinT (shrinkage covariance) is NOT implemented.** It needs the
+    42,840^2 error covariance, ~14 GB dense. `wls_var` is the practical variant
+    and the literature finds it close to full MinT.
 
 ---
 

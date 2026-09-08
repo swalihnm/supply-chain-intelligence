@@ -3,7 +3,7 @@
 Every number here is produced by a script in this repo and reproducible with
 `sci warehouse build` followed by `sci analyze <name>`.
 
-**All four layers are built. The headline is in §6.**
+**All four layers are built, plus hierarchical reconciliation. The headline is in §7; reconciliation is in §10.**
 
 ---
 
@@ -172,9 +172,7 @@ as a controlled feature rather than a lift factor lifted from this table.
 
 ---
 
----
-
-## 5. Forecast accuracy
+## 6. Forecast accuracy
 
 Rolling-origin CV, 5 folds, 28-day horizon. The test fold (d1914–1941) was
 scored once.
@@ -253,7 +251,7 @@ and 0.95, so the direct models are used.
 
 ---
 
-## 6. The decision — counterfactual on the test window
+## 7. The decision — counterfactual on the test window
 
 All policies replay the same realised demand over d1914–1941, after a 28-day
 warm-up so none benefits from its starting inventory.
@@ -306,7 +304,7 @@ direction is not. That is a stronger claim than any single number.
 
 ---
 
-## 7. Service level frontier
+## 8. Service level frontier
 
 | Target | Achieved fill | Avg on hand | Avg safety stock | Total cost |
 |---:|---:|---:|---:|---:|
@@ -348,7 +346,7 @@ that relationship reverses — which is exactly what the sensitivity grid is for
 
 ---
 
-## 8. Constrained allocation and shadow prices
+## 9. Constrained allocation and shadow prices
 
 Capacity set to 85% of what the unconstrained optimum wants at each store, plus a
 budget cap at 90% of its capital, so the constraints bind and the duals are
@@ -383,14 +381,91 @@ predicts.
 
 ---
 
-## 9. What is not here
+## 10. Hierarchical reconciliation
+
+42,840 nodes over 30,490 bottom series, across the 12 published M5 levels. Base
+forecasts made independently: global LightGBM at the bottom, AutoETS on the 154
+genuinely smooth nodes, TSB on the 12,196 `item`/`item_state` nodes that are
+still intermittent.
+
+### The problem, made concrete
+
+The total-level forecast says **1,147,983 units**. The bottom-level forecasts
+sum to **1,241,178**. Two teams looking at the same 28 days, **8.1% apart** —
+and the largest single-node disagreement is 7,934 units.
+
+| Method | Max adding-up violation |
+|---|---:|
+| base (independent) | 7,933.7 units |
+| bottom_up | **0.0** |
+| ols | **0.0** |
+| wls_struct | **0.0** |
+| wls_var | **0.0** |
+
+Every reconciliation method makes the numbers add up exactly. That is the
+deliverable; the accuracy question below is separate.
+
+### RMSSE by level
+
+| Level | Nodes | base | bottom_up | ols | wls_struct | **wls_var** |
+|---|---:|---:|---:|---:|---:|---:|
+| total | 1 | 0.669 | **0.298** | 0.626 | 0.618 | 0.613 |
+| state | 3 | 0.700 | **0.377** | 0.673 | 0.658 | 0.629 |
+| store | 10 | 0.698 | **0.458** | 0.671 | 0.673 | 0.649 |
+| category | 3 | 0.630 | **0.368** | 0.586 | 0.594 | 0.629 |
+| department | 7 | 0.893 | **0.480** | 0.796 | 0.850 | 0.820 |
+| state × category | 9 | 0.664 | **0.466** | 0.635 | 0.634 | 0.650 |
+| state × department | 21 | 0.880 | **0.583** | 0.811 | 0.831 | 0.801 |
+| store × category | 30 | 0.677 | **0.556** | 0.687 | 0.670 | 0.675 |
+| store × department | 70 | 0.827 | **0.655** | 0.824 | 0.799 | 0.776 |
+| item | 3,049 | 0.908 | 0.864 | 0.910 | 0.870 | **0.858** |
+| item × state | 9,147 | 0.849 | 0.837 | 0.853 | 0.832 | **0.825** |
+| item × store | 30,490 | 0.824 | 0.824 | 0.830 | 0.820 | **0.818** |
+
+### Two findings, and the second is the honest one
+
+**1. MinT improves the bottom level for free.** `wls_var` scores 0.8176 at
+item × store against the base model's 0.8241 — 0.8% better, with no new model,
+purely from pooling information across levels. It also wins at `item` (−5.5%)
+and `item × state` (−2.8%).
+
+**2. Bottom-up beats every MinT variant on the aggregate levels, by a lot** —
+−55% at total, −46% at department. That is not what the textbook expects, and
+it is a fact about *these* base forecasts rather than about reconciliation.
+
+The reason is straightforward once stated: **the bottom-level model is far
+stronger than the aggregate-level models.** The global LightGBM was tuned,
+backtested over five folds and given 33 engineered features; the aggregate
+forecasts are an out-of-the-box AutoETS and a TSB rate. MinT blends base
+forecasts in proportion to their assumed error variance, so blending a good
+forecast with a poor one lands between them. Simply summing the good one wins.
+
+**What that implies for next steps** is specific: to make MinT beat bottom-up on
+aggregates, the aggregate forecasts have to be competitive — which means
+training the global ML model at each level rather than reaching for ETS. That is
+a real piece of work, and it is the honest recommendation rather than a claim
+that reconciliation "improved accuracy".
+
+### What to actually ship
+
+`wls_var`. It is coherent, it is the best method at the three levels holding
+30,490 / 9,147 / 3,049 nodes (which is where the replenishment decisions are
+made), and it costs one sparse linear solve. If aggregate-level accuracy were
+the priority instead, bottom-up is coherent too and better there — the choice is
+between two coherent options, which is a much better place to be than choosing
+between incoherent ones.
+
+---
+
+## 11. What is not here
 
 - No Favorita cross-validation (spec's first cut item)
 - No Google Trends (second cut item; heavily rate-limited)
 - No FRED macro covariates — the client is written and tested but no API key was
   configured, so `core.fact_macro` is empty
-- No hierarchical reconciliation across the item/dept/category/store/state
-  hierarchy. This is the one *substantive* omission: coherent aggregation would
-  matter to a business planning at category level, and it is the first thing to
-  add next.
+- No full MinT with a shrinkage covariance — it needs the 42,840² error
+  covariance (~14 GB dense). `wls_var` is the practical variant and the
+  literature finds it close.
+- Aggregate-level base forecasts are out-of-the-box AutoETS/TSB rather than
+  tuned models, which is why bottom-up beats MinT on those levels (see §10).
 - No live deployment URL yet — the container builds and runs locally.

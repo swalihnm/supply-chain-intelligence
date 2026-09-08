@@ -440,3 +440,36 @@ else:
             width="stretch",
         )
         table(agg, "feature importance")
+
+    recon = S.tables.get("reconciliation_accuracy")
+    coh = S.tables.get("reconciliation_coherence")
+    if recon is not None:
+        st.subheader("Hierarchical reconciliation")
+        st.caption(
+            "Forecasts made independently at each altitude do not add up. The store "
+            "orders at SKU level, the buyer plans at department level, finance plans "
+            "at state level — and three incoherent numbers become an argument about "
+            "whose spreadsheet is right. Reconciliation produces one coherent set."
+        )
+
+        if coh is not None:
+            st.markdown("**Adding-up violation, before and after**")
+            st.dataframe(coh.to_pandas(), width="stretch")
+
+        levels = S.tables.get("hierarchy_levels")
+        order = (
+            {n: i for i, n in enumerate(levels["level"].to_list())} if levels is not None else {}
+        )
+        wide = recon.pivot(values="rmsse", index=["level", "n_nodes"], on="method")
+        if order:
+            wide = (
+                wide.with_columns(
+                    pl.col("level")
+                    .replace_strict(order, default=99, return_dtype=pl.Int32)
+                    .alias("_o")
+                )
+                .sort("_o")
+                .drop("_o")
+            )
+        st.markdown("**RMSSE by level** (lower is better)")
+        st.dataframe(wide.to_pandas(), width="stretch")

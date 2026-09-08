@@ -87,6 +87,9 @@ def _load_tables(art: Path) -> dict[str, pl.DataFrame]:
         "shadow_prices",
         "policy_test",
         "abc_xyz_segmentation",
+        "reconciliation_accuracy",
+        "reconciliation_coherence",
+        "hierarchy_levels",
         "stockout_proxy_detection",
     ]
     out = {}

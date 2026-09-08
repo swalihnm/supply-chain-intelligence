@@ -39,6 +39,7 @@ transform/   availability filter, stockout proxy, segmentation  (46.9M-row panel
 features/    point-in-time-correct feature store  (33 features, every lag >= 28d)
    |
 models/      baselines -> global LightGBM -> quantiles -> calibration
+   |             + AutoETS/TSB on aggregates -> MinT reconciliation (42,840 nodes)
    |
 optimize/    (s,S) policy, expected-cost allocation, constrained LP + shadow prices
    |
@@ -87,6 +88,27 @@ test fold, nominal 0.90 covers **0.9007**, nominal 0.95 covers **0.9505**, and
 nominal 0.99 covers **0.9885** — gaps under 0.002. That matters more than the
 WRMSSE: a 0.95 quantile that only covered 0.88 would make the optimizer buy a
 service level it never achieves in the store.
+
+### Hierarchical coherence
+
+Independent forecasts at different altitudes disagree by **8.1%** — the
+total-level forecast says 1,147,983 units while the bottom level sums to
+1,241,178. Two teams, same 28 days, two plans.
+
+Reconciliation over all **42,840 nodes across 12 levels** fixes that exactly
+(adding-up violation 7,934 units → 0). `wls_var` MinT also improves the bottom
+level 0.8% for free, purely from pooling information across levels.
+
+But the honest headline is the other way round: **bottom-up beats every MinT
+variant on the aggregate levels** — 55% better at total. That is a fact about
+these base forecasts, not about reconciliation: the bottom model is tuned and
+backtested while the aggregate models are an out-of-the-box AutoETS. MinT blends
+toward the weaker forecast. [Full table and what it implies →](docs/04-results.md#10-hierarchical-reconciliation)
+
+The solve is matrix-free: `S'W⁻¹S` is 30,490² **and dense**, needing ~7.4 GB on
+a 7.3 GB machine, so conjugate gradients uses only its action on a vector — two
+sparse mat-vecs over 365,880 non-zeros. Verified against the dense closed form
+on a small hierarchy.
 
 ### The data work
 
@@ -138,6 +160,14 @@ repo:
 4. **The first allocation overfit** — it chose each series' level by simulating on
    the realised test demand. A 39% "saving" that was hindsight. Levels now come
    from forecast-derived expected cost only.
+5. **AutoETS was run on all 12,350 aggregate nodes.** It took over 20 minutes and
+   drove the machine into swap — for the `item` and `item × state` levels, which
+   are *still intermittent* and where a smoothing model has least to offer. Now
+   routed: AutoETS on the 154 genuinely smooth nodes, TSB on the 12,196 sparse
+   ones. Runs in seconds.
+6. **The dashboard rendered a blank executive view** after a policy rename, because
+   it filtered for a name that no longer existed. Caught by `tests/test_dashboard.py`,
+   which runs every view through Streamlit's `AppTest`.
 
 ## How to run locally
 
@@ -151,6 +181,7 @@ uv run sci analyze                 # the five SQL analytics reports
 
 uv run python scripts/run_model_ladder.py     # ~40 min
 uv run python scripts/run_optimizer.py        # ~15 min
+uv run python scripts/run_reconciliation.py   # ~2 min
 uv run python scripts/build_serving_bundle.py
 
 uv run streamlit run app/dashboard.py
@@ -173,4 +204,4 @@ Requires Python 3.11 or 3.12 and the M5 dataset from
 (accept the competition rules first). Set `SCI_DATA_DIR` somewhere outside any
 synced folder — the warehouse and matrices run to several GB.
 
-Tests: `uv run pytest` (101 tests).
+Tests: `uv run pytest` (123 tests).

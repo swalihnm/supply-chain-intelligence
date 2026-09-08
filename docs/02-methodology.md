@@ -255,6 +255,75 @@ The interesting question is not which has the better pinball loss but whether
 either is **calibrated**. A 0.95 quantile that only covers 88% of outcomes makes
 the optimizer buy a service level it will not achieve in the store.
 
+### Hierarchical reconciliation
+
+**Why it matters to the business, not just statistically.** Forecasts get
+consumed at different altitudes: a store orders at SKU level, a category buyer
+plans at department level, finance plans at state and total. Made
+independently, those numbers do not add up — and then three people hold three
+different plans for the same business, and any disagreement becomes an argument
+about whose spreadsheet is right rather than about what to do. Reconciliation
+produces **one** set of numbers, coherent by construction.
+
+The M5 structure has 12 levels and **42,840 nodes over 30,490 bottom series**:
+
+| Level | Nodes | | Level | Nodes |
+|---|---:|---|---|---:|
+| total | 1 | | store × category | 30 |
+| state | 3 | | store × department | 70 |
+| store | 10 | | item | 3,049 |
+| category | 3 | | item × state | 9,147 |
+| department | 7 | | item × store | 30,490 |
+| state × category | 9 | | | |
+| state × department | 21 | | | |
+
+This is a **grouped** structure, not a strict tree: `item` aggregates across
+stores while `store` aggregates across items, and neither nests in the other.
+That rules out the simple recursive tree algorithms and forces a linear solve.
+
+#### Base forecasts are made independently, on purpose
+
+- **Bottom level** — the global LightGBM from the model ladder
+- **Levels 1–11** — AutoETS per node
+
+The split is not arbitrary. ETS on an intermittent SKU-store series fits noise,
+which the baseline table demonstrates. But summed over a store or a category,
+demand is smooth, weekly-seasonal and has no zeros — ETS's home ground. Each
+method is used where its assumptions hold.
+
+#### The solve, and why it fits in memory
+
+With summing matrix **S** and base forecasts ŷ, the reconciled bottom is
+
+```
+b̃ = (S' W⁻¹ S)⁻¹ S' W⁻¹ ŷ
+```
+
+`S' W⁻¹ S` is 30,490 × 30,490 **and dense** — every pair of bottom series
+co-occurs at the `total` node, so no sparsity survives. Materialising it needs
+about 7.4 GB, on a machine with 7.3 GB of RAM.
+
+So it is never materialised. Conjugate gradients needs only the matrix's action
+on a vector:
+
+```
+(S' W⁻¹ S) v  =  S' ( W⁻¹ ( S v ) )
+```
+
+— two sparse mat-vecs against a matrix with 365,880 non-zeros (0.028% dense).
+The system is symmetric positive definite, and it is Jacobi-preconditioned with
+the exact diagonal, which *is* cheap to compute. A problem that does not fit in
+memory becomes a few seconds of sparse arithmetic.
+
+`tests/test_reconcile.py` verifies the matrix-free solver against the dense
+closed form on a small hierarchy where the textbook formula can be computed
+directly — that is what makes the fast path trustworthy.
+
+Weight choices: `ols` (W = I), `wls_struct` (W = row sums of S), `wls_var`
+(W = in-sample MSE). Full MinT with a shrinkage covariance is **not**
+implemented: it needs the 42,840² error covariance, about 14 GB dense, and the
+literature finds `wls_var` is usually close to it in practice.
+
 ---
 
 ## Layer 3 — Optimization
