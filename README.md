@@ -82,8 +82,11 @@ A 3.8% CV improvement over a tuned TSB baseline. Modest, and reported as such â€
 the direct 28-day-lag design gives up short-horizon accuracy in exchange for a
 leakage audit that is arithmetic rather than trust.
 
-Quantiles calibrate well where the optimizer uses them: nominal 0.95 covers
-0.958 empirically, nominal 0.99 covers 0.990.
+Quantiles calibrate almost exactly where the optimizer reads them. On the locked
+test fold, nominal 0.90 covers **0.9007**, nominal 0.95 covers **0.9505**, and
+nominal 0.99 covers **0.9885** â€” gaps under 0.002. That matters more than the
+WRMSSE: a 0.95 quantile that only covered 0.88 would make the optimizer buy a
+service level it never achieves in the store.
 
 ### The data work
 

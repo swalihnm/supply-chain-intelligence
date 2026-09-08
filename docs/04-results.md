@@ -226,14 +226,19 @@ on smooth ones — exactly where you would expect.
 
 ### Quantile calibration
 
-Where the optimizer actually reads the distribution, calibration is good:
+Where the optimizer actually reads the distribution, calibration is close to
+exact — and it is *better* on the locked test fold than in CV, which is the
+direction you want:
 
-| Nominal | Empirical (cv4) | Empirical (test) |
-|---:|---:|---:|
-| 0.50 | 0.665 | — |
-| 0.90 | 0.914 | — |
-| 0.95 | 0.958 | — |
-| 0.99 | 0.990 | 0.988 |
+| Nominal | cv4 | cv5 | **test (locked)** | test gap |
+|---:|---:|---:|---:|---:|
+| 0.50 | 0.665 | 0.660 | 0.638 | +0.138 |
+| 0.90 | 0.914 | 0.913 | **0.9007** | **+0.0007** |
+| 0.95 | 0.958 | 0.958 | **0.9505** | **+0.0005** |
+| 0.99 | 0.990 | 0.990 | **0.9885** | −0.0015 |
+
+Split conformal was tried as an alternative and came out slightly *worse* at
+0.90 (0.8887) and 0.95 (0.9434), so the direct quantile models are used.
 
 **The 0.5 quantile is badly calibrated (0.665 vs 0.50), and that is a property
 of the data, not a defect.** Coverage is defined as P(actual ≤ predicted), and
