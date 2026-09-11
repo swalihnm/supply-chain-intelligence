@@ -9,16 +9,16 @@ Spec: `PROJECT-01-supply-chain-forecasting.md` (the original brief).
 
 ## Current state
 
-**All four weeks built and run end to end, plus hierarchical reconciliation.
-123 tests pass. Only the container deploy is outstanding: it needs one
-interactive install (UAC prompt or sudo password) that an agent cannot do.**
+**Feature-complete. All four weeks plus hierarchical reconciliation, built and
+run end to end. 123 tests pass. The container is BUILT AND VERIFIED as of
+2026-09-12. The only thing left is hosting it somewhere public.**
 
 | Week | Deliverable | Status |
 |---|---|---|
 | 1 | Ingestion + warehouse + SQL analytics | ✅ complete |
 | 2 | Feature store + model ladder + backtest harness | ✅ complete |
 | 3 | Optimizer + counterfactual + shadow prices | ✅ complete |
-| 4 | API + dashboard + docs | ✅ complete (container unverified) |
+| 4 | API + dashboard + docs | ✅ complete (container built + verified) |
 | + | Hierarchical reconciliation (42,840 nodes) | ✅ complete |
 
 ### Headline
@@ -37,38 +37,23 @@ bottom model is much stronger than the aggregate ones.
 
 ### What is genuinely left
 
-1. **Deploy for a live URL — needs one interactive install the agent cannot do.**
+1. **Host the container somewhere public** — the last remaining deliverable.
 
-   CORRECTION (2026-09-11): an earlier note here claimed the user is not a
-   Windows admin. That was wrong. `IsInRole(Administrator)` returns False for a
-   NON-ELEVATED shell regardless of group membership; checking
-   `Get-LocalGroupMember -Group Administrators` shows `SWALIH\swali` IS an
-   administrator. Docker Desktop is therefore available.
+   Docker Desktop 29.7.2 is now installed and the image is built and verified
+   (see the session-4 log). `docker compose up --build` gives a working
+   dashboard on :8501 and API on :8000. What is missing is only a public URL.
 
-   What the agent still cannot do is click a UAC prompt or type a sudo
-   password — both are interactive. So the install itself is the user's step,
-   by either route:
+   Options, cheapest first:
+   - **Fly.io** — `fly launch` then `fly deploy`. Free allowance covers this;
+     the image is 1.4 GB and the API holds ~209 MB resident, so a 512 MB-1 GB
+     machine is enough for the dashboard. NOTE: `/simulate` takes ~42 s and
+     peaks higher; give the API instance 1 GB if that endpoint must work.
+   - **Render** — connect the repo, Docker environment, free tier sleeps.
+   - **Railway** — similar.
 
-   **Preferred — Docker Desktop (native Windows).** In an ELEVATED terminal
-   (right-click Start -> Terminal (Admin)):
-   ```powershell
-   winget install -e --id Docker.DockerDesktop
-   ```
-   Reboot, launch Docker Desktop, wait for the engine. Works on Win 11 Home via
-   the WSL2 backend.
-
-   **Alternative — Docker Engine inside WSL2** (no reboot, no UAC; needs the
-   Ubuntu sudo password):
-   ```bash
-   sudo apt-get update && sudo apt-get install -y uidmap iptables ca-certificates curl
-   curl -fsSL https://get.docker.com | sudo sh
-   sudo usermod -aG docker $USER && sudo service docker start
-   ```
-
-   Everything else is ready: WSL2 (Ubuntu 24.04), virtualization on, cgroup2,
-   subuid/subgid configured, 954 GB free, 22 artifacts already staged.
-
-   Then: `uv run python scripts/stage_deploy.py && docker compose up --build`.
+   Caveat to decide before deploying: `deploy/data/artifacts/` is gitignored, so
+   a repo-connected build (Render/Railway) will NOT have the artifacts. Either
+   push the image directly (Fly) or un-ignore that directory for deployment.
 
 2. Optional: FRED macro covariates (client written, dormant, needs a free key);
    Favorita cross-validation; Google Trends. All three are explicit cut items in
@@ -313,3 +298,29 @@ self-corrections, both written into the docs:
 Prerequisites that ARE in place: WSL2, cgroup2, subuid/subgid configured for the
 user, 954 GB free. The one-time command the user must run is in
 "What is genuinely left" above.
+
+### Session 4 — 2026-09-12
+
+Docker Desktop 29.7.2 installed by the user via an elevated `winget install`.
+The image was then **built and verified for the first time**, and it worked on
+the first build — no Dockerfile changes needed.
+
+Verified in-container:
+- both services healthy (`api` :8000, `dashboard` :8501)
+- `/health` loads all 19 artifact tables
+- `/forecast` and `/policy` return correct per-series values
+- `/simulate` runs the full 30,490-series simulation in ~42 s and returns
+  numbers IDENTICAL to the local run (fill 0.9103, cost 171,736) — which is the
+  real proof the serving bundle survived the copy intact
+- the dashboard container loads the store and builds Plotly figures (checked by
+  exec'ing a script, since Streamlit only runs its script on websocket connect,
+  so an HTTP 200 alone proves nothing)
+- no Traceback/ERROR lines in either container's logs
+
+Image 1.4 GB; api ~209 MB resident, dashboard ~76 MB.
+
+Also corrected a factual error in this file: it had claimed the user is not a
+Windows administrator. `IsInRole(Administrator)` reports False for any
+non-elevated shell regardless of group membership; the account is in fact in the
+Administrators group. The real constraint was always narrower — an agent cannot
+click a UAC prompt.

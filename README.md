@@ -7,7 +7,8 @@
 > 95% bootstrap CI on the cost delta: −8.5% to −1.9%.
 > The baseline is *reconstructed*, not observed — [read why that matters](docs/03-assumptions-and-limitations.md#a5--the-observed-baseline-is-reconstructed-not-observed).
 
-**Live demo:** _not yet deployed — `docker compose up` runs it locally._
+**Live demo:** _not yet hosted. `docker compose up --build` runs it locally —
+dashboard on :8501, API docs on :8000/docs. Verified working._
 
 ---
 
@@ -195,9 +196,10 @@ uv run python scripts/stage_deploy.py   # copies 23 MB of serving artifacts into
 docker compose up --build               # dashboard :8501, API :8000/docs
 ```
 
-> **Not yet verified.** Docker is not installed on the machine this was built on,
-> so the Dockerfile and compose file are written but have never been built or
-> run. Treat them as untested until someone does.
+**Verified.** Built and run on Docker 29.7.2 / Compose v5.5.1. Both containers
+report healthy; `/simulate` runs the full 30,490-series simulation inside the
+container in ~42 s and returns numbers identical to the local run. Image is
+1.4 GB; the API holds ~209 MB resident, the dashboard ~76 MB.
 
 Requires Python 3.11 or 3.12 and the M5 dataset from
 [Kaggle](https://www.kaggle.com/competitions/m5-forecasting-accuracy/data)
