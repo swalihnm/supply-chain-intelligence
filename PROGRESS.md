@@ -10,8 +10,8 @@ Spec: `PROJECT-01-supply-chain-forecasting.md` (the original brief).
 ## Current state
 
 **All four weeks built and run end to end, plus hierarchical reconciliation.
-123 tests pass. Only the container deploy is outstanding, and it is blocked
-on a credential rather than on work.**
+123 tests pass. Only the container deploy is outstanding: it needs one
+interactive install (UAC prompt or sudo password) that an agent cannot do.**
 
 | Week | Deliverable | Status |
 |---|---|---|
@@ -37,23 +37,37 @@ bottom model is much stronger than the aggregate ones.
 
 ### What is genuinely left
 
-1. **Deploy for a live URL — BLOCKED on a credential, not on work.**
-   Docker cannot be installed from this session:
-   - Docker Desktop needs Windows admin; the session user is not an admin, so
-     `winget install Docker.DockerDesktop` stops at a UAC prompt.
-   - Docker Engine in WSL2 needs the Ubuntu `sudo` password.
-   - Rootless Docker needs `uidmap` + `iptables`, neither installed, and
-     installing them needs sudo.
+1. **Deploy for a live URL — needs one interactive install the agent cannot do.**
 
-   Everything else is ready: WSL2 (Ubuntu 24.04) is installed, virtualization is
-   on, cgroup2 is present, subuid/subgid are configured, 954 GB free.
+   CORRECTION (2026-09-11): an earlier note here claimed the user is not a
+   Windows admin. That was wrong. `IsInRole(Administrator)` returns False for a
+   NON-ELEVATED shell regardless of group membership; checking
+   `Get-LocalGroupMember -Group Administrators` shows `SWALIH\swali` IS an
+   administrator. Docker Desktop is therefore available.
 
-   **The user runs this once, in a WSL terminal:**
+   What the agent still cannot do is click a UAC prompt or type a sudo
+   password — both are interactive. So the install itself is the user's step,
+   by either route:
+
+   **Preferred — Docker Desktop (native Windows).** In an ELEVATED terminal
+   (right-click Start -> Terminal (Admin)):
+   ```powershell
+   winget install -e --id Docker.DockerDesktop
+   ```
+   Reboot, launch Docker Desktop, wait for the engine. Works on Win 11 Home via
+   the WSL2 backend.
+
+   **Alternative — Docker Engine inside WSL2** (no reboot, no UAC; needs the
+   Ubuntu sudo password):
    ```bash
    sudo apt-get update && sudo apt-get install -y uidmap iptables ca-certificates curl
    curl -fsSL https://get.docker.com | sudo sh
    sudo usermod -aG docker $USER && sudo service docker start
    ```
+
+   Everything else is ready: WSL2 (Ubuntu 24.04), virtualization on, cgroup2,
+   subuid/subgid configured, 954 GB free, 22 artifacts already staged.
+
    Then: `uv run python scripts/stage_deploy.py && docker compose up --build`.
 
 2. Optional: FRED macro covariates (client written, dormant, needs a free key);
@@ -288,7 +302,9 @@ self-corrections, both written into the docs:
    that way, with the concrete next step rather than a spun conclusion.
 
 **Docker was attempted and is genuinely blocked**, not skipped:
-- Not a Windows admin -> Docker Desktop's installer stops at UAC.
+- Docker Desktop's installer needs an elevated shell; the agent cannot click
+  the UAC prompt. (An earlier version of this line said the user is not an
+  admin - wrong; see the correction under "What is genuinely left".)
 - WSL2 (Ubuntu 24.04) is installed and virtualization is on, but `sudo` needs a
   password that cannot be supplied non-interactively.
 - Rootless Docker needs `uidmap` and `iptables`; neither is present and both
