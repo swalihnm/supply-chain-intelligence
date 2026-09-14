@@ -138,6 +138,7 @@ on a small hierarchy.
 
 | Doc | What is in it |
 |---|---|
+| **[00-project-explained.md](docs/00-project-explained.md)** | **Start here — the whole project in one narrative, with every result and every caveat** |
 | [01-data-sources.md](docs/01-data-sources.md) | The four sources, the unpivot, provenance |
 | [02-methodology.md](docs/02-methodology.md) | Protocol, model ladder, leakage rules, policy derivation, LP formulation |
 | [03-assumptions-and-limitations.md](docs/03-assumptions-and-limitations.md) | Ten numbered assumptions, each with its direction of bias |
