@@ -69,6 +69,14 @@ bootstrap at a uniform service level was actively *worse*. The entire gain came
 from **deciding which series deserve the stock** — the allocation step. That is
 not the result the project was hoping for, and it is the one it found.
 
+![Service level versus cost](docs/frontier.png)
+
+The star is the recommendation and the diamond is where the business currently
+sits: down and to the right means cheaper *and* better served, so there is no
+trade-off to argue about. The blue curve is what a single uniform target buys —
+the recommendation is not on it, because it sets a different service level for
+each series.
+
 ### The forecast
 
 | Model | CV WRMSSE | Test WRMSSE |
@@ -126,10 +134,16 @@ on a small hierarchy.
 - **SNAP days lift FOODS +7.7%** but HOBBIES only +1.3% — an end-to-end
   validation of the calendar → store → state join that nothing was tuned to produce.
 
-## Methods
+## Documentation
 
-[docs/02-methodology.md](docs/02-methodology.md) — the protocol, the model
-ladder, the leakage rules, the policy derivation, and the LP formulation.
+| Doc | What is in it |
+|---|---|
+| [01-data-sources.md](docs/01-data-sources.md) | The four sources, the unpivot, provenance |
+| [02-methodology.md](docs/02-methodology.md) | Protocol, model ladder, leakage rules, policy derivation, LP formulation |
+| [03-assumptions-and-limitations.md](docs/03-assumptions-and-limitations.md) | Ten numbered assumptions, each with its direction of bias |
+| [04-results.md](docs/04-results.md) | Every measured number, reproducible |
+| [05-deployment.md](docs/05-deployment.md) | Local + Fly.io, and the gitignore gotcha that decides the host |
+| [06-resume-and-interview.md](docs/06-resume-and-interview.md) | Resume bullets with real numbers, and cold answers to the hard questions |
 
 ## Limitations
 
@@ -184,6 +198,7 @@ uv run python scripts/run_model_ladder.py     # ~40 min
 uv run python scripts/run_optimizer.py        # ~15 min
 uv run python scripts/run_reconciliation.py   # ~2 min
 uv run python scripts/build_serving_bundle.py
+uv run python scripts/make_figures.py    # regenerates docs/frontier.png
 
 uv run streamlit run app/dashboard.py
 uv run uvicorn app.api:app --reload

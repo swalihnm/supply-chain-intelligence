@@ -1,0 +1,64 @@
+# Fly.io config for the dashboard.
+#
+# WHY FLY RATHER THAN A REPO-CONNECTED HOST
+# -----------------------------------------
+# `deploy/data/artifacts/` is gitignored — it is 23 MB of derived data that does
+# not belong in version control. Render and Railway build FROM the repo, so they
+# would produce an image with no artifacts in it and the app would start, fail
+# to find the serving bundle, and show its "artifacts not built" error.
+#
+# Fly pushes the locally-built image instead, so the gitignore is irrelevant.
+# That is the whole reason for this file.
+#
+#   fly auth login                       # interactive, one time
+#   uv run python scripts/stage_deploy.py
+#   fly launch --no-deploy --copy-config # first time only
+#   fly deploy
+#
+# To serve the API instead of the dashboard, change the CMD below to ["api"]
+# and internal_port to 8000, or run a second app.
+
+app = "supply-chain-intelligence"
+primary_region = "sin"   # Singapore — nearest to the machine this was built on
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SCI_DATA_DIR = "/data"
+  PORT = "8080"
+
+[processes]
+  # The entrypoint takes a role argument; "dashboard" is the demo worth linking.
+  app = "dashboard"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Zero when idle keeps this inside the free allowance. First request after an
+  # idle period pays a cold start.
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 40
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 1 GB, not 512 MB. The dashboard idles at ~76 MB, but the Policy explorer's
+  # "Run simulation" button re-derives the policy and simulates all 30,490
+  # series, which peaks well above 512 MB and would be OOM-killed.
+  memory = "1gb"
+  cpus = 1
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8080
+    path = "/_stcore/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "40s"

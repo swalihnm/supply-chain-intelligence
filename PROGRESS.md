@@ -37,23 +37,32 @@ bottom model is much stronger than the aggregate ones.
 
 ### What is genuinely left
 
-1. **Host the container somewhere public** — the last remaining deliverable.
+1. **Host the container somewhere public** — the only remaining deliverable,
+   and it is blocked on ONE interactive step: `fly auth login` opens a browser.
 
-   Docker Desktop 29.7.2 is now installed and the image is built and verified
-   (see the session-4 log). `docker compose up --build` gives a working
-   dashboard on :8501 and API on :8000. What is missing is only a public URL.
+   Everything else is prepared and verified:
+   - Docker Desktop 29.7.2 installed; image built and running locally
+   - `fly.toml` written, with the `PORT` override verified working in-container
+     (`docker run -e PORT=8080` -> Streamlit binds 8080, health returns ok)
+   - 1 GB not 512 MB: the dashboard idles at ~76 MB but "Run simulation"
+     simulates all 30,490 series and would be OOM-killed on the smaller machine
+   - `min_machines_running = 0` to stay inside the free allowance
 
-   Options, cheapest first:
-   - **Fly.io** — `fly launch` then `fly deploy`. Free allowance covers this;
-     the image is 1.4 GB and the API holds ~209 MB resident, so a 512 MB-1 GB
-     machine is enough for the dashboard. NOTE: `/simulate` takes ~42 s and
-     peaks higher; give the API instance 1 GB if that endpoint must work.
-   - **Render** — connect the repo, Docker environment, free tier sleeps.
-   - **Railway** — similar.
+   ```bash
+   winget install -e --id Fly.Flyctl
+   fly auth login                          # <- the user's step, opens a browser
+   uv run python scripts/stage_deploy.py
+   fly launch --no-deploy --copy-config    # first time only
+   fly deploy
+   ```
 
-   Caveat to decide before deploying: `deploy/data/artifacts/` is gitignored, so
-   a repo-connected build (Render/Railway) will NOT have the artifacts. Either
-   push the image directly (Fly) or un-ignore that directory for deployment.
+   Then replace the "not yet hosted" line at the top of the README with the URL.
+
+   **Why Fly and not Render/Railway:** `deploy/data/artifacts/` is gitignored, so
+   a repo-connected build ships an image with no artifacts — the app starts,
+   finds no serving bundle, and shows its "artifacts not built" error rather than
+   crashing, which makes it easy to misdiagnose. Fly pushes the local image, so
+   the gitignore is irrelevant. Full detail in `docs/05-deployment.md`.
 
 2. Optional: FRED macro covariates (client written, dormant, needs a free key);
    Favorita cross-validation; Google Trends. All three are explicit cut items in
@@ -72,6 +81,7 @@ uv run python scripts/run_model_ladder.py      # ~40 min
 uv run python scripts/run_optimizer.py         # ~15 min
 uv run python scripts/run_reconciliation.py    # ~2 min
 uv run python scripts/build_serving_bundle.py
+uv run python scripts/make_figures.py          # docs/frontier.png
 uv run pytest                                  # 123 tests
 ```
 
@@ -126,7 +136,11 @@ uv run pytest                # 123 tests
   `simulate_counterfactual.py`
 - `app/` — `api.py`, `dashboard.py`, `viz.py`, `store.py`
 - `scripts/` — `run_model_ladder.py`, `run_optimizer.py`,
-  `build_serving_bundle.py`, `stage_deploy.py`
+  `run_reconciliation.py`, `build_serving_bundle.py`, `stage_deploy.py`,
+  `make_figures.py`
+- `docs/` — 01 sources, 02 methodology, 03 assumptions, 04 results,
+  05 deployment, 06 resume + interview prep, `frontier.png`
+- `fly.toml` — Fly.io config; `PORT` override verified working in-container
 - `ingest/` — `m5_loader.py`, `weather_client.py`, `fred_client.py` (dormant)
 - `sql/ddl/` → `sql/transform/` → `sql/analytics/` (pipeline order matters)
 - `tests/` — 123 tests, all passing
@@ -324,3 +338,38 @@ Windows administrator. `IsInRole(Administrator)` reports False for any
 non-elevated shell regardless of group membership; the account is in fact in the
 Administrators group. The real constraint was always narrower — an agent cannot
 click a UAC prompt.
+
+### Session 5 — 2026-09-14
+
+Closed the last gaps found by auditing the repo against the spec rather than
+against memory.
+
+**Bug found by rendering a chart.** `docs/frontier.png` came out with a "nan%"
+label and the recommended-point ring on the wrong marker. Cause: Polars treats
+null and NaN as different, and the baseline row carries NaN in
+`target_service_level` — so `is_not_null()` alone let it through and it was
+drawn as a ninth point ON the frontier line. **The dashboard had the identical
+bug** (`app/dashboard.py`), shipped and unnoticed, because nothing had ever
+looked at that chart closely. Both now filter `is_not_null() & is_not_nan()`.
+
+That chart also originally marked a point on the uniform-target curve as
+"recommended". It is not: the recommendation allocates a service level per
+series and sits off the curve entirely. It is now a separate star, which makes
+the dominance result (cheaper AND higher service) visible at a glance.
+
+Added:
+- `scripts/make_figures.py` + `docs/frontier.png`, embedded in the README. The
+  spec calls the frontier the best chart in the project for an interview, and a
+  README that only described it had not delivered it.
+- `fly.toml`, with the `PORT` override verified in a real container run.
+- `docs/05-deployment.md` — local (verified) and Fly, plus the gitignore gotcha.
+- `docs/06-resume-and-interview.md` — resume bullets with measured numbers, a
+  "what NOT to claim" list, and cold answers to all seven spec questions.
+
+Audited: no TODO/FIXME/placeholder left anywhere; all relative markdown links in
+README, PROGRESS and docs resolve (checked programmatically, 0 broken).
+
+Not done: `docs/architecture.png`. The README's ASCII diagram renders everywhere
+including plain text and stays correct when the pipeline changes; a PNG would be
+a second thing to keep in sync for no gain in clarity. Noted as a deliberate
+choice rather than an omission.

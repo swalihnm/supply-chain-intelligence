@@ -137,9 +137,15 @@ if VIEW == "Executive":
     if frontier is None:
         missing("Frontier", "uv run python scripts/run_optimizer.py")
     else:
-        pts = frontier.filter(pl.col("target_service_level").is_not_null()).sort(
-            "target_service_level"
-        )
+        # is_not_null() alone is NOT enough: the baseline row carries NaN, not
+        # null, in this column, and Polars treats those as different. Without
+        # the is_not_nan() the baseline is drawn as an eighth point ON the
+        # frontier line, labelled "nan%", and the recommended-point marker
+        # lands on it.
+        pts = frontier.filter(
+            pl.col("target_service_level").is_not_null()
+            & pl.col("target_service_level").is_not_nan()
+        ).sort("target_service_level")
         bl = frontier.filter(pl.col("policy") == "reconstructed_baseline")
         b_fill = float(bl["fill_rate"][0]) if bl.height else None
         b_cost = float(bl["total_cost"][0]) if bl.height else None
