@@ -11,7 +11,7 @@ import duckdb
 import pytest
 
 from sci.config import settings
-from sci.warehouse import DDL_DIR, run_ddl
+from sci.warehouse import DDL_DIR, connect, run_ddl
 
 EXPECTED_TABLES = {
     "dim_date",
@@ -72,7 +72,9 @@ pytestmark_needs_db = pytest.mark.skipif(
 @pytestmark_needs_db
 def test_built_warehouse_sales_grain_is_unique():
     """(item_id, store_id, d) must be unique in fact_sales. Skipped until M5 lands."""
-    con = duckdb.connect(str(settings.duckdb_path), read_only=True)
+    # Via sci.warehouse.connect so the memory limit and spill directory apply;
+    # a bare duckdb.connect() lets DuckDB assume ~80% of RAM and then fail.
+    con = connect(read_only=True)
     try:
         total, distinct = con.execute(
             "SELECT count(*), count(DISTINCT (item_id, store_id, d)) FROM core.fact_sales"
@@ -86,7 +88,9 @@ def test_built_warehouse_sales_grain_is_unique():
 
 @pytestmark_needs_db
 def test_built_warehouse_weather_covers_every_state():
-    con = duckdb.connect(str(settings.duckdb_path), read_only=True)
+    # Via sci.warehouse.connect so the memory limit and spill directory apply;
+    # a bare duckdb.connect() lets DuckDB assume ~80% of RAM and then fail.
+    con = connect(read_only=True)
     try:
         states = {
             r[0] for r in con.execute("SELECT DISTINCT state_id FROM core.fact_weather").fetchall()

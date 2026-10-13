@@ -192,7 +192,7 @@ uv sync --extra dev --extra models --extra optimize --extra app
 cp .env.example .env      # set SCI_DATA_DIR and SCI_M5_SOURCE
 
 uv run sci ingest all              # M5 from local zip + Open-Meteo weather
-uv run sci warehouse build         # ~4 min -> 163 MB DuckDB
+uv run sci warehouse build         # ~4 min -> ~1.9 GB DuckDB
 uv run sci analyze                 # the five SQL analytics reports
 
 uv run python scripts/run_model_ladder.py     # ~40 min

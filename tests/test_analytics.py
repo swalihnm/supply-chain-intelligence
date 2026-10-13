@@ -6,11 +6,10 @@ green on a fresh clone before `sci warehouse build` has run.
 
 from __future__ import annotations
 
-import duckdb
 import pytest
 
 from sci.config import settings
-from sci.warehouse import ANALYTICS_DIR, TRANSFORM_DIR
+from sci.warehouse import ANALYTICS_DIR, TRANSFORM_DIR, connect
 
 pytestmark = pytest.mark.skipif(
     not settings.duckdb_path.exists(), reason="warehouse not built (run: sci warehouse build)"
@@ -19,7 +18,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def con():
-    c = duckdb.connect(str(settings.duckdb_path), read_only=True)
+    # Via sci.warehouse.connect for the memory limit and spill directory -
+    # promo_lift_analysis runs window functions over the 46.9M-row panel.
+    c = connect(read_only=True)
     try:
         if c.execute("SELECT count(*) FROM core.panel").fetchone()[0] == 0:
             pytest.skip("core.panel is empty")

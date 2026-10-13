@@ -93,8 +93,28 @@ def _specs() -> list[LoadSpec]:
 
 
 def connect(read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open the warehouse with a bounded memory budget and room to spill.
+
+    DuckDB defaults to ~80% of system RAM, which sounds generous and is in fact
+    the problem on a small machine: it will happily plan a query that needs more
+    than what is actually free and then fail with OutOfMemoryException rather
+    than spilling.
+
+    That is not hypothetical here. `SELECT count(DISTINCT (item_id, store_id, d))
+    FROM core.fact_sales` builds a hash table over 59.2M rows, and
+    promo_lift_analysis.sql runs window functions over the 46.9M-row panel. Both
+    passed on an idle machine and both failed once Docker Desktop and two
+    containers were holding a couple of gigabytes - a test suite whose result
+    depends on what else is open is not a test suite.
+
+    Setting an explicit limit plus a temp directory makes DuckDB spill to disk
+    instead of dying. Slower on the heavy queries, correct everywhere.
+    """
     settings.ensure_dirs()
-    return duckdb.connect(str(settings.duckdb_path), read_only=read_only)
+    con = duckdb.connect(str(settings.duckdb_path), read_only=read_only)
+    con.execute(f"SET memory_limit = '{settings.duckdb_memory_limit}'")
+    con.execute(f"SET temp_directory = '{settings.duckdb_temp_dir.as_posix()}'")
+    return con
 
 
 def run_ddl(con: duckdb.DuckDBPyConnection) -> list[str]:

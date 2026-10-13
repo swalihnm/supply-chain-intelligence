@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     m5_source: str = Field(default="", alias="SCI_M5_SOURCE")
     fred_api_key: str = Field(default="", alias="FRED_API_KEY")
 
+    # --- engine ------------------------------------------------------------
+    # DuckDB defaults to ~80% of system RAM and then FAILS rather than spilling
+    # when that estimate is wrong. An explicit, modest limit plus a temp
+    # directory makes the heavy queries spill to disk instead. Raise it on a
+    # bigger machine; 2 GB is chosen to leave room for everything else.
+    duckdb_memory_limit: str = Field(default="2GB", alias="SCI_DUCKDB_MEMORY_LIMIT")
+
     @field_validator("data_dir", mode="before")
     @classmethod
     def _expand(cls, v: str | Path) -> Path:
@@ -64,6 +71,11 @@ class Settings(BaseSettings):
     def duckdb_path(self) -> Path:
         return self.warehouse_dir / "sci.duckdb"
 
+    @property
+    def duckdb_temp_dir(self) -> Path:
+        """Where DuckDB spills when a query exceeds the memory limit."""
+        return self.data_dir / "tmp"
+
     def ensure_dirs(self) -> None:
         for p in (
             self.raw_dir,
@@ -71,6 +83,7 @@ class Settings(BaseSettings):
             self.warehouse_dir,
             self.features_dir,
             self.artifacts_dir,
+            self.duckdb_temp_dir,
         ):
             p.mkdir(parents=True, exist_ok=True)
 

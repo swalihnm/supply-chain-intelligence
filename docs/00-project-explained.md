@@ -117,8 +117,16 @@ core.stockout_flags    254,122   the subset judged to be censoring (see §5)
 core.series_class       30,490   ABC, XYZ and Syntetos-Boylan per series
 ```
 
-The whole thing is 163 MB on disk and rebuilds from the raw zip in about four
-minutes.
+The whole thing rebuilds from the raw zip in about four minutes and occupies
+roughly **1.9 GB** on disk — of which about 1.1 GB is live data and the rest is
+free blocks. DuckDB does not return pages to the OS after a `CREATE OR REPLACE`,
+so the file grows across repeated rebuilds without the data growing.
+
+> An earlier draft of this document said 163 MB. That figure was measured at the
+> end of week 1, before the transform layer added `core.panel` (46.9M rows) and
+> `core.zero_runs` (6.6M rows) — 53M rows that were never reflected back into the
+> number. Corrected here from `PRAGMA database_size`: 7,527 total blocks, 4,101
+> used, 3,426 free, at 256 KB per block.
 
 ### One engineering decision worth defending
 
@@ -1028,7 +1036,7 @@ uv sync --extra dev --extra models --extra optimize --extra app
 cp .env.example .env      # set SCI_DATA_DIR and SCI_M5_SOURCE
 
 uv run sci ingest all              # M5 from local zip + Open-Meteo weather
-uv run sci warehouse build         # ~4 min -> 163 MB DuckDB
+uv run sci warehouse build         # ~4 min -> ~1.9 GB DuckDB
 uv run sci analyze                 # the five SQL analytics reports
 
 uv run python scripts/run_model_ladder.py     # ~40 min

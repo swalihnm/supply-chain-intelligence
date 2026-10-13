@@ -16,7 +16,7 @@ Every number here is produced by a script in this repo and reproducible with
 | Series | 30,490 (3,049 items × 10 stores) |
 | Stores | 10 across CA (4), TX (3), WI (3) |
 | Date range | 2011-01-29 → 2016-05-22 |
-| Warehouse size | 163 MB (DuckDB, zstd parquet staging) |
+| Warehouse size | ~1.9 GB on disk; ~1.1 GB live data, the rest free blocks |
 | Full rebuild time | ~4 minutes from raw zip |
 
 ### The availability filter

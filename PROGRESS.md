@@ -101,7 +101,7 @@ uv run pytest                                  # 123 tests
 ```bash
 uv sync --extra dev
 uv run sci ingest all        # M5 from local zip + Open-Meteo weather
-uv run sci warehouse build   # ~4 min -> 163 MB DuckDB
+uv run sci warehouse build   # ~4 min -> ~1.9 GB DuckDB
 uv run pytest                # 123 tests
 ```
 
@@ -373,3 +373,28 @@ Not done: `docs/architecture.png`. The README's ASCII diagram renders everywhere
 including plain text and stays correct when the pipeline changes; a PNG would be
 a second thing to keep in sync for no gain in clarity. Noted as a deliberate
 choice rather than an omission.
+
+### Session 6 — 2026-10-13
+
+Repo published to https://github.com/swalihnm/supply-chain-intelligence (public).
+History rewritten to remove AI-attribution trailers and re-author every commit as
+`swalihnm <swalihnm@users.noreply.github.com>`; MIT LICENSE added with a note
+that no M5 data is redistributed.
+
+**A flaky-test class of bug, found by running the suite under memory pressure.**
+Two tests - the fact_sales grain check (count DISTINCT over 59.2M rows) and
+promo_lift_analysis (window functions over the 46.9M-row panel) - passed on an
+idle machine and failed with OutOfMemoryException once Docker Desktop and two
+containers were holding a couple of gigabytes.
+
+DuckDB defaults to ~80% of system RAM and then FAILS rather than spilling when
+that estimate is wrong. `sci.warehouse.connect()` now sets an explicit
+`memory_limit` (2 GB, `SCI_DUCKDB_MEMORY_LIMIT`) and a `temp_directory` under
+`SCI_DATA_DIR/tmp`, so heavy queries spill to disk. Both tests now route through
+that function instead of a bare `duckdb.connect()`. Verified: 123/123 pass with
+0.43 GB free RAM.
+
+**Corrected a stale figure.** Five places claimed the warehouse is 163 MB. It is
+~1.9 GB (1.1 GB live, the rest free blocks). The 163 MB was measured at the end
+of week 1, before the transform layer added core.panel and core.zero_runs - 53M
+rows that were never reflected back into the number.
