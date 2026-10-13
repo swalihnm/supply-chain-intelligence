@@ -217,9 +217,17 @@ report healthy; `/simulate` runs the full 30,490-series simulation inside the
 container in ~42 s and returns numbers identical to the local run. Image is
 1.4 GB; the API holds ~209 MB resident, the dashboard ~76 MB.
 
+The M5 dataset is **not** included in this repository and nothing derived from
+it is committed — only the code that produces it. Expect the first full run to
+take roughly an hour.
+
 Requires Python 3.11 or 3.12 and the M5 dataset from
 [Kaggle](https://www.kaggle.com/competitions/m5-forecasting-accuracy/data)
 (accept the competition rules first). Set `SCI_DATA_DIR` somewhere outside any
 synced folder — the warehouse and matrices run to several GB.
 
 Tests: `uv run pytest` (123 tests).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
