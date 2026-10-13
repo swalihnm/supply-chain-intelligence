@@ -7,30 +7,46 @@ rounded up, and nothing is claimed that the code does not produce.
 
 ## Resume bullets
 
-Pick three. The fourth is a fallback if the role is more engineering than
-science.
+Six bullets, each tied to a figure that is reproducible from this repo. Nothing
+is rounded in a flattering direction.
 
-> **Built an end-to-end demand forecasting and inventory optimization system
-> over 30,490 retail SKU-store series**, integrating transactional, weather and
-> calendar data into a DuckDB star schema — 59.2M raw rows reduced to a
-> 46.9M-row availability-filtered panel, with a per-series adaptive stockout
-> detector that flags 4.0% of days as censored demand.
+**Supply Chain Intelligence** — demand forecasting & inventory optimization
 
-> **Developed a hierarchically reconciled probabilistic forecasting stack**
-> (Croston, TSB, global LightGBM with Tweedie and quantile objectives),
-> improving WRMSSE 3.8% over a tuned intermittent-demand baseline on
-> rolling-origin backtests, with quantiles calibrated to within 0.002 of nominal
-> at the 90th, 95th and 99th percentiles on a locked test set.
+- Built an end-to-end demand forecasting and inventory optimization system over
+  **30,490 retail SKU-store series**, integrating transactional, weather and
+  calendar data into a DuckDB star schema — 59.2M raw rows reduced to a
+  46.9M-row point-in-time-correct analysis panel.
 
-> **Translated forecast distributions into a constrained (s,S) replenishment
-> policy that cut simulated inventory cost 5.0% while raising fill rate 1.0
-> point** (95% bootstrap CI: −8.5% to −1.9%), using an LP relaxation of a
-> 243,920-variable multiple-choice knapsack to allocate service levels per
-> series under store-capacity and budget constraints, with shadow-price analysis.
+- Engineered a **per-series adaptive stockout detector** that identifies censored
+  demand on 3.99% of panel days, replacing a fixed-threshold rule that
+  misclassified 18.3% of the panel as censoring and would have biased every
+  downstream safety-stock calculation downward.
 
-> **Deployed as a containerised FastAPI service and Streamlit dashboard**
-> exposing the service-level-versus-cost frontier for live scenario planning;
-> `/simulate` re-runs the full 30,490-series inventory simulation per request.
+- Developed a probabilistic forecasting stack (Croston, TSB, global LightGBM with
+  Tweedie and quantile objectives) improving **WRMSSE 3.8%** over a tuned
+  intermittent-demand baseline, with quantiles calibrated to **within 0.002 of
+  nominal** at the 90th, 95th and 99th percentiles on a locked hold-out set.
+
+- Implemented **MinT hierarchical reconciliation across 42,840 nodes** via a
+  matrix-free preconditioned conjugate-gradient solve, eliminating an 8.1%
+  adding-up disagreement between SKU- and company-level forecasts on hardware too
+  small to materialize the 7.4 GB system matrix.
+
+- Translated forecast distributions into a constrained (s,S) replenishment policy
+  that **cut simulated inventory cost 5.0% while raising fill rate 1.0 point**
+  (95% bootstrap CI: −8.5% to −1.9%), allocating service levels per series
+  through an LP relaxation of a **243,920-variable multiple-choice knapsack**,
+  with shadow-price analysis identifying shelf space rather than capital as the
+  binding constraint.
+
+- Deployed as a **containerized FastAPI service and Streamlit dashboard** with
+  live scenario simulation across all 30,490 series, backed by **123 tests**
+  covering leakage audits, backtest-protocol integrity and numerical correctness.
+
+### If space is tight
+
+Keep bullets 1, 3, 5 and 6 — data engineering, modelling, business impact,
+shipping. Bullets 2 and 4 reward a technical reader but cost two lines each.
 
 ### What NOT to claim
 
