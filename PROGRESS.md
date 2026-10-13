@@ -227,17 +227,83 @@ uv run pytest                # 123 tests
 
 ---
 
-## Key numbers (for README / interview prep)
+## Key numbers
 
+**`docs/04-results.md` is authoritative** — it carries every figure with its
+context and caveats, and is regenerated from the artifacts. This is the
+quick-reference subset for a session handoff.
+
+### Data and analytics (week 1)
+
+- 59,181,090 raw rows -> 46,881,677-row panel (20.8% dropped as not-yet-stocked)
+- Availability filter verified: price-NULL block contiguous and leading for
+  **100.00%** of all 30,490 series; zero rows with units > 0 and NULL price
 - 91% of series are intermittent or lumpy (Syntetos-Boylan)
-- 45.1% of revenue is in the AZ box (high value, high variability), 96% of it intermittent
+- 45.1% of revenue in the AZ box (high value, high variability), 96% intermittent
 - Revenue is NOT 80/20: it takes 36.8% of series to reach 80% of revenue
-- Stockout proxy: 3.99% of panel days; sensitivity 2.37%–10.86% across alpha 0.001–0.05
-- SNAP lifts FOODS +7.7%, HOBBIES +1.3%, HOUSEHOLD +1.9%
-- Naive elasticity: FOODS −0.43, HOUSEHOLD −0.36, HOBBIES −0.26 (all weak R², not causal)
-- Weekend lift: +19% to +26% depending on category
+- Stockout proxy: **3.99%** of panel days; dormant a further 14.27%
+- Alpha sensitivity: 2.37%-10.86% across 0.001-0.05 (a 4.6x swing)
+- SNAP lifts FOODS **+7.7%**, HOUSEHOLD +1.9%, HOBBIES +1.3%
+- Weekend lift +18.7% to +25.6% by category
+- Naive elasticity: FOODS -0.43, HOUSEHOLD -0.36, HOBBIES -0.26 (weak R², not causal)
+- Promo: deep discounts +103% (FOODS 20-35%); shallow 5-20% associate with
+  LOWER demand (-27% to -30%) - most likely endogeneity, not a price response
 
----
+### Forecasting (week 2)
+
+| Model | CV WRMSSE | Test WRMSSE |
+|---|---:|---:|
+| **global LightGBM (Tweedie)** | **0.8559** | **0.8446** |
+| TSB | 0.8893 | 0.8626 |
+| Croston | 0.8910 | 0.8639 |
+| moving average | 0.8950 | 0.8720 |
+| seasonal naive | 1.1563 | 1.1017 |
+| zero forecast | 1.3963 | 1.4132 |
+
+- 3.8% CV improvement over a tuned TSB baseline
+- The zero forecast has the BEST MASE (0.986) and worst WRMSSE - metric choice
+  is a modelling decision
+- Calibration on the locked test fold: q0.90 -> 0.9007, q0.95 -> 0.9505,
+  q0.99 -> 0.9885 (gaps under 0.002). q0.50 -> 0.638, which is the zero point
+  mass, not a defect
+- Conformal was worse than direct quantile regression at 0.90 and 0.95
+- Quantile crossing repaired on 2.7% of cells
+
+### Decision (week 3)
+
+| Policy | Fill rate | Cost (28d) | vs baseline | 95% CI |
+|---|---:|---:|---:|---|
+| reconstructed baseline | 94.05% | $127,930 | - | - |
+| better forecast only | 94.03% | $129,254 | +1.0% | -1.3% to +3.5% |
+| empirical SS, uniform level | 94.02% | $133,976 | +4.7% | +1.4% to +8.3% |
+| **per-series allocation** | **95.06%** | **$121,500** | **-5.0%** | **-8.5% to -1.9%** |
+
+- Unmet units 73,263 -> 60,805 (**-17%**) while spending 5% less
+- **The gain came from the ALLOCATION, not the forecast.** A better forecast
+  alone moved cost +1.0% with a CI straddling zero
+- Sensitivity: all 27 cost-assumption cells show a saving; -0.77% to -8.76%,
+  median -5.16%
+- Frontier is MONOTONE to 99.9% - no interior optimum, because a lost unit costs
+  ~26x holding one over the ~12-day exposure window
+- Shadow prices: shelf space worth 5.1c/28d at CA_3, 3.9c at TX_1; budget dual
+  0.32c - **space binds, capital does not**. Constraints cost $2,551 (2.6%)
+- LP relaxation left 11 fractional assignments of 30,490 - exactly the
+  theoretical bound of one per side constraint
+
+### Reconciliation
+
+- 42,840 nodes over 30,490 bottom series, 12 levels
+- Base forecasts disagree **8.1%** at the total level (1,147,983 vs 1,241,178);
+  max single-node violation 7,934 units -> **0.0** for all four methods
+- `wls_var` improves the bottom level 0.8% for free (0.8176 vs 0.8241)
+- **bottom_up beats every MinT variant on aggregate levels** (up to 55% at
+  total) - a fact about these base forecasts, not about reconciliation
+
+### Engineering
+
+- Warehouse ~1.9 GB on disk (~1.1 GB live, rest free blocks); rebuilds in ~4 min
+- Image 1.4 GB; API ~209 MB resident, dashboard ~76 MB; /simulate ~42 s
+- 123 tests, verified passing with 0.43 GB free RAM
 
 ## Open items / known risks
 
